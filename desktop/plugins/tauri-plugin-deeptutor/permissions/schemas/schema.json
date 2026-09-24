@@ -343,6 +343,18 @@
           "markdownDescription": "Denies the first_run_state command without any pre-configured scope."
         },
         {
+          "description": "Enables the install_shell_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-install-shell-update",
+          "markdownDescription": "Enables the install_shell_update command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install_shell_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-install-shell-update",
+          "markdownDescription": "Denies the install_shell_update command without any pre-configured scope."
+        },
+        {
           "description": "Enables the log_event command without any pre-configured scope.",
           "type": "string",
           "const": "allow-log-event",
@@ -487,10 +499,10 @@
           "markdownDescription": "Denies the update_shell_settings command without any pre-configured scope."
         },
         {
-          "description": "Commands the DeepTutor UI needs from the desktop shell: read the local service\nstatus and restart it, read/write shell preferences, post system notifications,\nclaim deep-link and file handoffs, run the first-run wizard and reach the\nnative file picker. Granted to the loopback origin the UI is served from.\n\n#### This default permission set includes:\n\n- `allow-desktop-status`\n- `allow-restart-service`\n- `allow-shell-settings`\n- `allow-update-shell-settings`\n- `allow-notify-round-complete`\n- `allow-take-notification-target`\n- `allow-take-open-request`\n- `allow-first-run-state`\n- `allow-apply-first-run`\n- `allow-check-updates`\n- `allow-log-event`\n- `allow-pick-files`\n- `allow-pick-folder`\n- `allow-reveal-in-folder`\n- `allow-read-local-file`\n- `allow-restart-app`",
+          "description": "Commands the DeepTutor UI needs from the desktop shell: read the local service\nstatus and restart it, read/write shell preferences, post system notifications,\nclaim deep-link and file handoffs, run the first-run wizard and reach the\nnative file picker. Granted to the loopback origin the UI is served from.\n\n#### This default permission set includes:\n\n- `allow-desktop-status`\n- `allow-restart-service`\n- `allow-shell-settings`\n- `allow-update-shell-settings`\n- `allow-notify-round-complete`\n- `allow-take-notification-target`\n- `allow-take-open-request`\n- `allow-first-run-state`\n- `allow-apply-first-run`\n- `allow-check-updates`\n- `allow-install-shell-update`\n- `allow-log-event`\n- `allow-pick-files`\n- `allow-pick-folder`\n- `allow-reveal-in-folder`\n- `allow-read-local-file`\n- `allow-restart-app`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Commands the DeepTutor UI needs from the desktop shell: read the local service\nstatus and restart it, read/write shell preferences, post system notifications,\nclaim deep-link and file handoffs, run the first-run wizard and reach the\nnative file picker. Granted to the loopback origin the UI is served from.\n\n#### This default permission set includes:\n\n- `allow-desktop-status`\n- `allow-restart-service`\n- `allow-shell-settings`\n- `allow-update-shell-settings`\n- `allow-notify-round-complete`\n- `allow-take-notification-target`\n- `allow-take-open-request`\n- `allow-first-run-state`\n- `allow-apply-first-run`\n- `allow-check-updates`\n- `allow-log-event`\n- `allow-pick-files`\n- `allow-pick-folder`\n- `allow-reveal-in-folder`\n- `allow-read-local-file`\n- `allow-restart-app`"
+          "markdownDescription": "Commands the DeepTutor UI needs from the desktop shell: read the local service\nstatus and restart it, read/write shell preferences, post system notifications,\nclaim deep-link and file handoffs, run the first-run wizard and reach the\nnative file picker. Granted to the loopback origin the UI is served from.\n\n#### This default permission set includes:\n\n- `allow-desktop-status`\n- `allow-restart-service`\n- `allow-shell-settings`\n- `allow-update-shell-settings`\n- `allow-notify-round-complete`\n- `allow-take-notification-target`\n- `allow-take-open-request`\n- `allow-first-run-state`\n- `allow-apply-first-run`\n- `allow-check-updates`\n- `allow-install-shell-update`\n- `allow-log-event`\n- `allow-pick-files`\n- `allow-pick-folder`\n- `allow-reveal-in-folder`\n- `allow-read-local-file`\n- `allow-restart-app`"
         }
       ]
     }

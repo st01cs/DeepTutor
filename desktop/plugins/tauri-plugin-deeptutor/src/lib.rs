@@ -21,6 +21,13 @@ use tauri::plugin::{Builder, TauriPlugin};
 use tauri::{Manager, Runtime, State};
 use tauri_plugin_dialog::DialogExt as _;
 
+mod updater;
+
+pub use updater::check as check_shell_update_async;
+pub use updater::install as install_shell_update_async;
+pub use updater::verify_download as verify_shell_update_download;
+pub use updater::ShellUpdateInstall;
+
 /// Largest file the UI may pull through the IPC bridge.
 ///
 /// A file dropped on the Dock icon arrives as a *path*; the UI needs bytes to
@@ -55,8 +62,11 @@ pub trait DesktopBackend: Send + Sync + 'static {
     fn first_run(&self) -> FirstRunState;
     /// Persist the wizard's answers. May ask the shell to restart.
     fn apply_first_run(&self, choices: FirstRunChoices) -> Result<FirstRunOutcome, String>;
-    /// Check the runtime pack catalog (and report the shell channel's state).
-    fn check_updates(&self) -> UpdateReport;
+    /// Check the **runtime pack** catalog.
+    ///
+    /// The shell plane is the plugin's own business (see `updater.rs`): it is a
+    /// plugin-native capability, available wherever the Tauri app handle is.
+    fn check_runtime_updates(&self) -> RuntimeUpdateReport;
 }
 
 /// Serialisable status payload. Field names are snake_case on purpose: the same
@@ -229,9 +239,13 @@ pub struct RuntimeUpdateReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ShellUpdateReport {
-    /// `unconfigured` until the signing keys land (see PHASE2_REPORT §4).
+    /// `available` | `up_to_date` | `error`.
     pub status: String,
     pub detail: String,
+    /// Version the update channel offers, when there is one.
+    pub available_version: Option<String>,
+    /// The running shell's version.
+    pub current_version: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -333,12 +347,28 @@ fn apply_first_run(
 }
 
 #[tauri::command]
-async fn check_updates(backend: State<'_, BackendState>) -> Result<UpdateReport, String> {
+async fn check_updates<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    backend: State<'_, BackendState>,
+) -> Result<UpdateReport, String> {
     // The catalog check may download a pack; never on the command thread.
     let backend = Arc::clone(&backend.0);
-    tauri::async_runtime::spawn_blocking(move || backend.check_updates())
+    let runtime = tauri::async_runtime::spawn_blocking(move || backend.check_runtime_updates())
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    // The shell plane is async natively, so it is awaited instead of blocking a
+    // pool thread — and it must never download, only answer.
+    let shell = updater::check(&app).await;
+    Ok(UpdateReport { runtime, shell })
+}
+
+/// Download and install the newest shell build, then leave the restart to the
+/// caller (`restart_app`) so the UI can show the outcome first.
+#[tauri::command]
+async fn install_shell_update<R: Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<ShellUpdateInstall, String> {
+    updater::install(&app).await
 }
 
 /// Shell-side log line. The UI uses this for things the webview cannot report
@@ -483,6 +513,7 @@ pub fn init<R: Runtime>(backend: Arc<dyn DesktopBackend>) -> TauriPlugin<R> {
             first_run_state,
             apply_first_run,
             check_updates,
+            install_shell_update,
             log_event,
             pick_files,
             pick_folder,

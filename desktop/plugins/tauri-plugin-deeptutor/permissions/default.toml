@@ -16,6 +16,7 @@ permissions = [
     "allow-first-run-state",
     "allow-apply-first-run",
     "allow-check-updates",
+    "allow-install-shell-update",
     "allow-log-event",
     "allow-pick-files",
     "allow-pick-folder",

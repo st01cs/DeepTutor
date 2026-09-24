@@ -26,6 +26,9 @@ tauri-plugin-window-state = "2"
 # `deeptutor://` URL scheme + file associations registered from tauri.conf.json.
 tauri-plugin-notification = "2"
 tauri-plugin-deep-link = "2"
+# Shell self-update channel (Phase 2 tail). The UI-facing commands live in
+# `tauri-plugin-deeptutor`; this is the plugin registration + config.
+tauri-plugin-updater = "2"
 # Runtime pack handling: tar.gz extraction, digests, downloads.
 flate2 = "1"
 sha2 = "0.10"

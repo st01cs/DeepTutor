@@ -5029,5 +5029,6 @@
   "The desktop app manages its own updates and must not be modified in place.": "The desktop app manages its own updates and must not be modified in place.",
   "Update settings": "Update settings",
   "Round finished": "Round finished",
-  "DeepTutor": "DeepTutor"
+  "DeepTutor": "DeepTutor",
+  "Download and install {{version}}": "Download and install {{version}}"
 }

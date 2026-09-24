@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FolderOpen, RefreshCw, RotateCcw } from "lucide-react";
+import { Download, FolderOpen, RefreshCw, RotateCcw } from "lucide-react";
 
 import {
   SettingRow,
@@ -12,9 +12,11 @@ import {
 import {
   SHELL_EVENTS,
   checkUpdates,
+  installShellUpdate,
   isDesktopShell,
   onShellEvent,
   openShellLogs,
+  restartApp,
   restartLocalService,
   shellSettings,
   shellStatus,
@@ -22,6 +24,7 @@ import {
   type DesktopShellStatus,
   type ShellSettingsSnapshot,
   type ShellSettingsPatch,
+  type UpdateReport,
 } from "@/lib/desktop-shell";
 
 /**
@@ -41,6 +44,10 @@ export default function DesktopSettingsPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Latest shell-channel answer, so the page can offer the install button. */
+  const [shellUpdate, setShellUpdate] = useState<UpdateReport["shell"] | null>(
+    null,
+  );
 
   const refresh = useCallback(async () => {
     if (!isDesktopShell()) {
@@ -248,6 +255,7 @@ export default function DesktopSettingsPage() {
             onClick={() =>
               void run("updates", async () => {
                 const report = await checkUpdates();
+                setShellUpdate(report.shell);
                 setMessage(`${report.runtime.detail}；${report.shell.detail}`);
                 await refresh();
               })
@@ -255,7 +263,33 @@ export default function DesktopSettingsPage() {
           >
             <RefreshCw size={14} /> {t("Check for updates")}
           </button>
+          {shellUpdate?.status === "available" && (
+            <button
+              type="button"
+              className="ml-2 inline-flex items-center gap-1.5 rounded-lg bg-[var(--foreground)] px-3 py-2 text-xs text-[var(--background)] disabled:opacity-50"
+              disabled={busy !== null}
+              onClick={() =>
+                void run("install", async () => {
+                  const result = await installShellUpdate();
+                  setMessage(result.detail);
+                  // The new build only runs after a relaunch; the installer has
+                  // already replaced the bundle by the time we get here.
+                  await restartApp();
+                })
+              }
+            >
+              <Download size={14} />
+              {t("Download and install {{version}}", {
+                version: shellUpdate.available_version ?? "",
+              })}
+            </button>
+          )}
         </div>
+        {shellUpdate && (
+          <p className="pt-2 text-[12px] leading-relaxed text-[var(--muted-foreground)]">
+            {shellUpdate.detail}
+          </p>
+        )}
       </SettingSection>
 
       {message && (

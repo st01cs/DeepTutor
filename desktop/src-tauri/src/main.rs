@@ -60,6 +60,11 @@ enum Headless {
     UpdatePack {
         source: String,
     },
+    /// Download and verify the newest shell build without installing it.
+    VerifyShellUpdate,
+    /// Install the newest shell build in place. Used by verification scripts and
+    /// by a support "update this machine now" runbook; the GUI asks first.
+    InstallShellUpdate,
     RollbackPack,
 }
 
@@ -95,6 +100,12 @@ fn headless_mode(args: &[String]) -> Option<Headless> {
             catalog: value("--catalog"),
         });
     }
+    if flag("--verify-shell-update") {
+        return Some(Headless::VerifyShellUpdate);
+    }
+    if flag("--install-shell-update") {
+        return Some(Headless::InstallShellUpdate);
+    }
     if flag("--pack-status") {
         return Some(Headless::PackStatus);
     }
@@ -120,6 +131,43 @@ fn print_json(value: &serde_json::Value) {
         "{}",
         serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string())
     );
+}
+
+/// The Tauri context, from a single `generate_context!()` expansion.
+///
+/// The macro embeds static resources (the Info.plist among them), so expanding
+/// it twice in one binary is a duplicate-symbol link error. Both the windowed
+/// entry point and the headless gates go through here.
+fn tauri_context() -> tauri::Context {
+    tauri::generate_context!()
+}
+
+/// A Tauri app with no window, built only so headless gates can reach the
+/// plugin-native APIs (the updater channel in particular).
+///
+/// The event loop is never run: `Builder::build` returns as soon as the plugins
+/// are set up, which is all `AppHandle::updater()` needs.
+fn headless_app() -> Option<tauri::App> {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .build(tauri_context())
+        .map_err(|error| eprintln!("headless app build failed: {error}"))
+        .ok()
+}
+
+/// The shell plane of the update check, for headless runs.
+fn headless_shell_update_report() -> tauri_plugin_deeptutor::ShellUpdateReport {
+    match headless_app() {
+        Some(app) => tauri::async_runtime::block_on(
+            tauri_plugin_deeptutor::check_shell_update_async(app.handle()),
+        ),
+        None => tauri_plugin_deeptutor::ShellUpdateReport {
+            status: "error".to_string(),
+            detail: "无法初始化更新通道（无窗口应用构建失败）".to_string(),
+            available_version: None,
+            current_version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+    }
 }
 
 fn pack_summary(pack: &InstalledPack) -> serde_json::Value {
@@ -204,15 +252,68 @@ fn run_headless(mode: Headless) -> i32 {
             let supervisor = Supervisor::new_shared(config);
             // Read-only on purpose: this gate must never download a pack, and
             // it must never restart a service from a process about to exit.
-            let report = supervisor.preview_updates(None);
-            let failed = report.runtime.detail.starts_with("检查运行时包失败");
+            let runtime = supervisor.preview_runtime_updates(None);
+            let shell = headless_shell_update_report();
+            let failed = runtime.detail.starts_with("检查运行时包失败") || shell.status == "error";
             print_json(&serde_json::json!({
                 "shell": "deeptutor-desktop",
                 "mode": "check-updates",
-                "runtime": report.runtime,
-                "shell_update": report.shell,
+                "runtime": runtime,
+                "shell_update": shell,
             }));
             i32::from(failed)
+        }
+
+        Headless::VerifyShellUpdate => {
+            // Release verification: fetch the published artifact and check its
+            // signature against the committed public key, without installing.
+            let Some(app) = headless_app() else {
+                eprintln!("无法初始化更新通道（无窗口应用构建失败）");
+                return 1;
+            };
+            match tauri::async_runtime::block_on(
+                tauri_plugin_deeptutor::verify_shell_update_download(app.handle()),
+            ) {
+                Ok(result) => {
+                    print_json(&serde_json::json!({
+                        "shell": "deeptutor-desktop",
+                        "mode": "verify-shell-update",
+                        "installed": result.installed,
+                        "version": result.version,
+                        "detail": result.detail,
+                    }));
+                    0
+                }
+                Err(error) => {
+                    eprintln!("外壳更新校验失败: {error}");
+                    1
+                }
+            }
+        }
+
+        Headless::InstallShellUpdate => {
+            let Some(app) = headless_app() else {
+                eprintln!("无法初始化更新通道（无窗口应用构建失败）");
+                return 1;
+            };
+            match tauri::async_runtime::block_on(
+                tauri_plugin_deeptutor::install_shell_update_async(app.handle()),
+            ) {
+                Ok(result) => {
+                    print_json(&serde_json::json!({
+                        "shell": "deeptutor-desktop",
+                        "mode": "install-shell-update",
+                        "installed": result.installed,
+                        "version": result.version,
+                        "detail": result.detail,
+                    }));
+                    0
+                }
+                Err(error) => {
+                    eprintln!("安装外壳更新失败: {error}");
+                    1
+                }
+            }
         }
 
         Headless::SelfCheck { require_python } => {
@@ -417,6 +518,10 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_deep_link::init())
+        // Shell self-update. The commands the UI calls live in the deeptutor
+        // plugin (which owns both update planes); this registers the native
+        // implementation and reads `plugins.updater` from tauri.conf.json.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deeptutor::init(backend))
         .setup({
             let supervisor = Arc::clone(&supervisor);
@@ -451,7 +556,7 @@ fn main() {
                 Ok(())
             }
         })
-        .build(tauri::generate_context!())
+        .build(tauri_context())
         .expect("failed to build the DeepTutor desktop shell")
         .run(|app_handle, event| match event {
             RunEvent::Exit => {

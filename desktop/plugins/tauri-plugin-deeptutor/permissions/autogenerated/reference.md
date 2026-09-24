@@ -17,6 +17,7 @@ native file picker. Granted to the loopback origin the UI is served from.
 - `allow-first-run-state`
 - `allow-apply-first-run`
 - `allow-check-updates`
+- `allow-install-shell-update`
 - `allow-log-event`
 - `allow-pick-files`
 - `allow-pick-folder`
@@ -133,6 +134,32 @@ Enables the first_run_state command without any pre-configured scope.
 <td>
 
 Denies the first_run_state command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`deeptutor:allow-install-shell-update`
+
+</td>
+<td>
+
+Enables the install_shell_update command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`deeptutor:deny-install-shell-update`
+
+</td>
+<td>
+
+Denies the install_shell_update command without any pre-configured scope.
 
 </td>
 </tr>

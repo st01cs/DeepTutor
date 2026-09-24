@@ -2,6 +2,9 @@
 
 日期：2026-09-24 · 范围：运行时包、安装/更新/回滚、发布流水线
 
+> **收尾（同日第二轮）**：外壳自更新通道已接通并端到端实测，发布流水线补齐真正的
+> dmg/nsis/msi、签名、公证、验证与 `latest.json`。详见文末 §8。
+
 ## 0. 结论
 
 Phase 2 的核心链路已经**真实跑通**：一个不含任何用户依赖的运行时包（自带 CPython、venv、
@@ -126,3 +129,61 @@ deeptutor-desktop --pack-status
    Node win-x64），但只在 macOS arm64 上实测过，另两个由 CI 矩阵覆盖。
 4. **四个 WebView 高风险面**（PDF / EPUB / 拖拽 / 导出下载）仍是人工待办。
 5. 归档目前是 `.tar.gz`；换 `.tar.zst` 预期再省约 15%，manifest 里已留格式字段。
+
+## 8. 收尾（2026-09-24 第二轮）
+
+§5 的第 1、2、3 条这次全部动过：能验证的都验证了，验证不了的原因也变了（从"没写"变成
+"缺证书/缺 runner"）。
+
+### 8.1 外壳自更新通道（§5 第 2 条）已接通
+
+| 项 | 落点 |
+| --- | --- |
+| 签名密钥 | `~/.tauri/deeptutor-updater.key`（私钥，待写入 CI secret）；公钥已提交进 `tauri.conf.json` |
+| 通道配置 | `plugins.updater.endpoints` → `releases/latest/download/latest.json`；`bundle.createUpdaterArtifacts: true` |
+| 检查 | 菜单/托盘"检查更新"、设置页按钮、`--check-updates` 一次性报告**两条通道** |
+| 安装 | 确认对话框 → 下载 → **验签** → 安装 → 收摊本地服务 → 重启应用；`--install-shell-update` 供脚本使用 |
+| 清单 | `desktop/scripts/assemble_updater_manifest.py`（逐平台合并，含结构校验）+ 8 条单测 |
+| 文档 | [`RELEASE_SIGNING.md`](RELEASE_SIGNING.md)：每个 secret 的含义与**缺失时的降级行为** |
+
+端到端实测（本机 1.6.10 → 1.6.11，走本机 HTTP 源）：
+
+```
+$ deeptutor-desktop --check-updates
+  runtime  未配置运行时更新源（local 测试未设 pack catalog）
+  shell    status=available  current=1.6.10  available=1.6.11
+
+$ deeptutor-desktop --verify-shell-update        # 下载 + 验签，不安装
+  已下载并校验 1.6.11（6 MB，未安装）            exit 0
+
+$ <把产物改一个字节> deeptutor-desktop --verify-shell-update
+  外壳更新校验失败: The signature verification failed     exit 1   ← 篡改被拒
+
+$ /private/tmp/…/DeepTutor.app/Contents/MacOS/deeptutor-desktop --install-shell-update
+  已安装 1.6.11，重启应用后生效
+  Info.plist: 1.6.10 → 1.6.11；替换后的 bundle 仍可运行
+```
+
+顺手修掉两个会真出事的坑：`generate_context!()` 展开两次导致链接期
+`_EMBED_INFO_PLIST` 重复定义（无头入口引入的）；以及 `parse` 早期版本把 `.sig` 当纯文本，
+而 Tauri 写的是 **base64 包着 minisign**，校验方式已按插件实现对齐。
+
+### 8.2 发布流水线（§5 第 1、3 条）
+
+原来的 shell job 跑的是 `tauri build --no-bundle`——也就是说**从来没有产出过 dmg/nsis/msi**。
+现在：
+
+| 项 | 现状 |
+| --- | --- |
+| 产物 | macOS arm64 / macOS x64（dmg + updater tar.gz）/ Windows x64（nsis + msi） |
+| 签名 | macOS 由 bundler 用 `APPLE_CERTIFICATE*` 签名并公证+staple `.app`；dmg 额外一轮 notarize+staple；Windows 导入 PFX 后把指纹写进 `--config` |
+| 验证 | `codesign --verify --deep --strict` + `stapler validate` + `spctl --assess`；Windows `Get-AuthenticodeSignature` 全部必须 Valid，否则 job 失败 |
+| 无证书时 | macOS ad-hoc 签名并 `::warning`；不发布 `latest.json`（不伪造更新通道） |
+| 清单 | 新增 `updater` job：合并各平台签名 → `latest.json` → `publish` job 用 `gh release upload` 挂到 release |
+| 守卫 | `validate` job 断言 `plugins.updater` 的 pubkey/endpoints/createUpdaterArtifacts 都在，避免发出"永远无法更新"的包 |
+
+本机能验证的那一半已经验证：`DeepTutor.app` 的 Info.plist 里
+`CFBundleURLSchemes=["deeptutor"]`、三种文档类型的 `LSItemContentTypes`
+（`com.adobe.pdf` / `org.idpf.epub-container` / `net.daringfireball.markdown`）齐全——
+顺带发现 tauri-utils 的 UTI 推断表里没有 epub/markdown，已改成显式 `contentTypes`。
+**剩余待验证项**：真实证书下的签名/公证、Windows runner 上的 nsis/msi 与签名、x64 运行时包。

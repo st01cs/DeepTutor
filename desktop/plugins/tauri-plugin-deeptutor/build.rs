@@ -17,6 +17,7 @@ const COMMANDS: &[&str] = &[
     "first_run_state",
     "apply_first_run",
     "check_updates",
+    "install_shell_update",
     "log_event",
     "pick_files",
     "pick_folder",

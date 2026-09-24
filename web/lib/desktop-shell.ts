@@ -130,7 +130,20 @@ export interface UpdateReport {
     app_version: string | null;
     detail: string;
   };
-  shell: { status: string; detail: string };
+  shell: {
+    /** `available` | `up_to_date` | `error`. */
+    status: string;
+    detail: string;
+    /** Version the update channel offers, when there is one. */
+    available_version: string | null;
+    current_version: string;
+  };
+}
+
+export interface ShellUpdateInstall {
+  installed: boolean;
+  version: string | null;
+  detail: string;
 }
 
 /** Events the shell broadcasts; the `deeptutor://` prefix is the shell's. */
@@ -282,6 +295,20 @@ export function pickFolder(options?: { title?: string }): Promise<string> {
 
 export function checkUpdates(): Promise<UpdateReport> {
   return desktopInvoke<UpdateReport>("check_updates");
+}
+
+/**
+ * Download, verify and install a new shell build.
+ *
+ * Verified by the shell against the update signing key before anything is
+ * installed; the caller restarts the app afterwards (`restartApp`).
+ */
+export function installShellUpdate(): Promise<ShellUpdateInstall> {
+  return desktopInvoke<ShellUpdateInstall>("install_shell_update");
+}
+
+export function restartApp(): Promise<void> {
+  return desktopInvoke<void>("restart_app");
 }
 
 export function shellLog(message: string): Promise<void> {

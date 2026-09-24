@@ -17,13 +17,11 @@ use tauri::menu::{
 };
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use tauri_plugin_deeptutor::DesktopBackend as _;
-use tauri_plugin_dialog::DialogExt as _;
-
-use tauri_plugin_deeptutor::{SettingsPatch, UpdateReport};
+use tauri_plugin_dialog::{DialogExt as _, MessageDialogButtons, MessageDialogKind};
 
 use crate::supervisor::Supervisor;
 use crate::window::MAIN_WINDOW;
+use tauri_plugin_deeptutor::{SettingsPatch, ShellUpdateReport, UpdateReport};
 
 /// Menu ids, kept in one place so the handler cannot drift from the builder.
 pub const MENU_RESTART_SERVICE: &str = "restart_service";
@@ -329,19 +327,31 @@ fn spawn_check_updates<R: Runtime>(app: &AppHandle<R>) {
         .name("deeptutor-update-check".to_string())
         .spawn(move || {
             let supervisor = app.state::<Arc<Supervisor>>();
-            let report = supervisor.check_updates();
+            // Runtime plane first: it is the one that installs silently, and a
+            // replaced pack only takes effect on the next backend start.
+            let runtime = supervisor.check_runtime_updates();
+            // A plain thread, so blocking on the updater's async API is safe.
+            let shell = tauri::async_runtime::block_on(
+                tauri_plugin_deeptutor::check_shell_update_async(&app),
+            );
+            let report = UpdateReport { runtime, shell };
             let summary = format_update_report(&report);
             supervisor.append_shell_log(&format!(
-                "update check: runtime(checked={} updated={} {}) shell({})",
+                "update check: runtime(checked={} updated={} {}) shell({} {})",
                 report.runtime.checked,
                 report.runtime.updated,
                 report.runtime.detail,
-                report.shell.status
+                report.shell.status,
+                report.shell.detail
             ));
             let _ = app.emit(
                 "deeptutor://update-report",
                 serde_json::to_value(&report).unwrap_or(serde_json::Value::Null),
             );
+            if report.shell.status == "available" {
+                ask_to_install_shell_update(&app, &supervisor, &report.shell);
+                return;
+            }
             // Non-blocking: this thread has no window to own the dialog, and the
             // plugin dispatches it onto the main thread for us.
             app.dialog()
@@ -350,6 +360,59 @@ fn spawn_check_updates<R: Runtime>(app: &AppHandle<R>) {
                 .show(|_| {});
         })
         .expect("failed to spawn the update-check thread");
+}
+
+/// Offer the shell update the check just found, and install it on a yes.
+///
+/// Runs on the update-check thread: the dialog plugin marshals the prompt onto
+/// the main thread, while the download stays here so a 250 MB artifact cannot
+/// freeze the window.
+fn ask_to_install_shell_update<R: Runtime>(
+    app: &AppHandle<R>,
+    supervisor: &Arc<Supervisor>,
+    shell: &ShellUpdateReport,
+) {
+    let version = shell
+        .available_version
+        .clone()
+        .unwrap_or_else(|| "?".to_string());
+    let answer = app
+        .dialog()
+        .message(format!(
+            "发现新版本 {version}（当前 {}）。\n\n下载并安装后需要重启应用。",
+            shell.current_version
+        ))
+        .title("DeepTutor 更新")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "下载并安装".to_string(),
+            "稍后".to_string(),
+        ))
+        .blocking_show();
+    if !answer {
+        supervisor.append_shell_log("shell update declined by the user");
+        return;
+    }
+    match tauri::async_runtime::block_on(tauri_plugin_deeptutor::install_shell_update_async(app)) {
+        Ok(result) => {
+            supervisor.append_shell_log(&format!(
+                "shell update installed: {} ({})",
+                result.version.unwrap_or_else(|| "?".to_string()),
+                result.detail
+            ));
+            // Take the local service down before the process is replaced, so the
+            // new build starts from a clean slate instead of inheriting ports.
+            supervisor.stop();
+            app.restart();
+        }
+        Err(error) => {
+            supervisor.append_shell_log(&format!("shell update failed: {error}"));
+            app.dialog()
+                .message(format!("外壳更新失败：{error}"))
+                .title("DeepTutor 更新")
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
+        }
+    }
 }
 
 /// Human-readable form of [`UpdateReport`], also asserted in this module's
@@ -382,7 +445,14 @@ mod tests {
     use super::*;
     use tauri_plugin_deeptutor::{RuntimeUpdateReport, ShellUpdateReport};
 
-    fn report(checked: bool, updated: bool, detail: &str, version: Option<&str>) -> UpdateReport {
+    fn report(
+        checked: bool,
+        updated: bool,
+        detail: &str,
+        version: Option<&str>,
+        shell_status: &str,
+        shell_detail: &str,
+    ) -> UpdateReport {
         UpdateReport {
             runtime: RuntimeUpdateReport {
                 checked,
@@ -394,19 +464,27 @@ mod tests {
                 detail: detail.to_string(),
             },
             shell: ShellUpdateReport {
-                status: "unconfigured".to_string(),
-                detail: "外壳自更新尚未配置签名密钥；请从发布页下载新版本。".to_string(),
+                status: shell_status.to_string(),
+                detail: shell_detail.to_string(),
+                available_version: (shell_status == "available").then(|| "1.6.12".to_string()),
+                current_version: "1.6.11".to_string(),
             },
         }
     }
 
     #[test]
     fn the_summary_names_both_update_planes() {
-        let text = format_update_report(&report(true, false, "运行时包已是最新", Some("1.6.11")));
+        let text = format_update_report(&report(
+            true,
+            false,
+            "运行时包已是最新",
+            Some("1.6.11"),
+            "up_to_date",
+            "外壳已是最新（1.6.11）",
+        ));
         assert!(text.contains("运行时包已是最新"));
         assert!(text.contains("1.6.11"));
-        // An unconfigured shell channel must never read as "up to date".
-        assert!(text.contains("外壳：外壳自更新尚未配置签名密钥"));
+        assert!(text.contains("外壳：外壳已是最新"));
     }
 
     #[test]
@@ -416,8 +494,23 @@ mod tests {
             false,
             "未配置运行时更新源：在 desktop/shell.json 写入 pack_catalog，或设置 DEEPTUTOR_DESKTOP_PACK_CATALOG。",
             None,
+            "up_to_date",
+            "外壳已是最新（1.6.11）",
         ));
         assert!(text.contains("未配置运行时更新源"));
         assert!(text.contains("DEEPTUTOR_DESKTOP_PACK_CATALOG"));
+    }
+
+    #[test]
+    fn an_available_shell_update_is_named_in_the_summary() {
+        let text = format_update_report(&report(
+            true,
+            false,
+            "运行时包已是最新",
+            Some("1.6.11"),
+            "available",
+            "有新版本 1.6.12 可用（当前 1.6.11）",
+        ));
+        assert!(text.contains("1.6.12"));
     }
 }

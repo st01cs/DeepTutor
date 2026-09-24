@@ -5029,5 +5029,6 @@
   "The desktop app manages its own updates and must not be modified in place.": "桌面应用自行管理更新，不能就地修改安装内容。",
   "Update settings": "更新设置",
   "Round finished": "回合完成",
-  "DeepTutor": "DeepTutor"
+  "DeepTutor": "DeepTutor",
+  "Download and install {{version}}": "下载并安装 {{version}}"
 }

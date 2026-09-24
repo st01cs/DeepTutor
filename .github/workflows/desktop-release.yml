@@ -2,13 +2,20 @@ name: Desktop Release
 
 # Builds the desktop artifacts on a release tag (or on demand):
 #   * one runtime pack per platform, with a per-platform catalog fragment
-#   * a merged runtime-packs.json the shell reads to update itself
-#   * the shell bundles (dmg / nsis / msi)
+#   * a merged runtime-packs.json the shell reads to update its runtime
+#   * the shell bundles (dmg / nsis / msi) plus the signed updater artifacts
+#   * one latest.json the shell reads to update itself
 #
 # Packs must be built on their own platform: a relocatable venv still contains
-# that platform's interpreter and wheels. The shell bundles are signed with
-# repository secrets; when a secret is absent the bundle step still builds but
-# is left unsigned, which is why the signing steps are conditional.
+# that platform's interpreter and wheels. Shell bundles are built per platform
+# for the same reason (a dmg/nsis is a native artifact), which is also where
+# code signing and notarization happen.
+#
+# Signing is driven entirely by repository secrets; see
+# `desktop/RELEASE_SIGNING.md` for what each one is and what degrades when it is
+# absent. In short: no Apple certificate → unsigned (ad-hoc) macOS bundles and no
+# notarization; no updater key → no signatures and no latest.json, so the app
+# keeps working but never sees an update.
 
 on:
   workflow_dispatch:
@@ -26,6 +33,9 @@ permissions:
 concurrency:
   group: desktop-release-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  TAURI_CLI_VERSION: "^2"
 
 jobs:
   validate:
@@ -50,6 +60,34 @@ jobs:
           uv pip compile pyproject.toml --extra cli --extra server \
             --python-version 3.12 --quiet -o /tmp/runtime.lock.txt
           diff -u desktop/pack/runtime.lock.txt /tmp/runtime.lock.txt
+
+      # A release with an empty pubkey builds bundles nobody can ever update
+      # from. Catch it here rather than in a bug report three months later.
+      - name: The update channel must be configured
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, sys
+
+          config = json.loads(pathlib.Path("desktop/src-tauri/tauri.conf.json").read_text())
+          updater = (config.get("plugins") or {}).get("updater") or {}
+          endpoints = updater.get("endpoints") or []
+          pubkey = (updater.get("pubkey") or "").strip()
+          create = (config.get("bundle") or {}).get("createUpdaterArtifacts")
+          problems = []
+          if not pubkey:
+              problems.append("plugins.updater.pubkey is empty")
+          if not endpoints:
+              problems.append("plugins.updater.endpoints is empty")
+          if not create:
+              problems.append("bundle.createUpdaterArtifacts is not enabled")
+          if problems:
+              print("desktop update channel is not configured:", file=sys.stderr)
+              for problem in problems:
+                  print(f"  - {problem}", file=sys.stderr)
+              sys.exit(1)
+          print(f"update channel ok: {endpoints[0]}")
+          PY
 
   packs:
     name: Runtime pack (${{ matrix.platform }})
@@ -136,22 +174,49 @@ jobs:
           if-no-files-found: error
 
   shell:
-    name: Shell bundle (${{ matrix.os }})
+    name: Shell bundle (${{ matrix.manifest_platform }})
     needs: validate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-2022]
+        include:
+          - manifest_platform: darwin-aarch64
+            os: macos-14
+            target: aarch64-apple-darwin
+            tauri_args: "--target aarch64-apple-darwin --bundles app,dmg"
+          - manifest_platform: darwin-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+            tauri_args: "--target x86_64-apple-darwin --bundles app,dmg"
+          - manifest_platform: windows-x86_64
+            os: windows-2022
+            target: ""
+            tauri_args: "--bundles nsis,msi"
+    env:
+      # Job-level so step conditions can test them (`secrets` is not available
+      # in `if:`), which is how the signing steps stay optional.
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Rust
+        shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install stable --profile minimal --component rustfmt,clippy --no-self-update
           rustup default stable
+          rustup target add "${{ matrix.target }}" 2>/dev/null || true
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -159,30 +224,242 @@ jobs:
           node-version: "20"
 
       - name: Install the Tauri CLI
-        run: npm install --global @tauri-apps/cli@^2
+        run: npm install --global @tauri-apps/cli@${{ env.TAURI_CLI_VERSION }}
 
       # `tauri icon` regenerates .icns/.ico from the PNG the repository ships;
       # the bundle targets refuse to build without them.
       - name: Generate the icon set
         run: tauri icon desktop/src-tauri/icons/icon.png --output desktop/src-tauri/icons
 
-      - name: Build the bundle (unsigned when no certificate is configured)
-        working-directory: desktop/src-tauri
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: tauri build --no-bundle
+      # The Tauri bundler's Windows signing reads a certificate *thumbprint*
+      # from the config, not a file: import the PFX here and hand it the
+      # thumbprint (see RELEASE_SIGNING.md).
+      - name: Import the Windows signing certificate
+        if: matrix.os == 'windows-2022' && env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP "deeptutor.pfx"
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $certificate = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          $signing = @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $certificate.Thumbprint
+                digestAlgorithm = "sha256"
+                timestampUrl = "http://timestamp.digicert.com"
+              }
+            }
+          }
+          # Written next to tauri.conf.json, because that is the working
+          # directory the build step passes the path from.
+          $signing | ConvertTo-Json -Depth 5 | Set-Content -Path desktop/src-tauri/windows-signing.json -Encoding utf8
+          Write-Host "imported $($certificate.Thumbprint) for the bundler"
 
-      - name: Upload the shell
+      - name: Build the bundle
+        shell: bash
+        working-directory: desktop/src-tauri
+        run: |
+          set -euo pipefail
+          args=(build ${{ matrix.tauri_args }})
+          if [ -n "$WINDOWS_CERTIFICATE" ]; then
+            args+=(--config windows-signing.json)
+          fi
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            # Without the updater private key the bundler cannot produce
+            # signatures, and `--no-sign` is how it is told to carry on. Code
+            # signing on macOS is independent: it simply does not happen when no
+            # certificate is configured.
+            args+=(--no-sign)
+            echo "::warning title=Update channel disabled::TAURI_SIGNING_PRIVATE_KEY is not set, so this platform produces no updater signature and latest.json will not cover it."
+          fi
+          if [ -z "${APPLE_CERTIFICATE:-}" ] && [ "${{ runner.os }}" = "macOS" ]; then
+            echo "::warning title=Unsigned macOS bundle::APPLE_CERTIFICATE is not set; the .app is ad-hoc signed and will not pass Gatekeeper on another Mac."
+          fi
+          tauri "${args[@]}"
+
+      # Gatekeeper on Apple silicon refuses to launch an unsigned bundle at all,
+      # so an ad-hoc signature at least keeps the artifact inspectable.
+      - name: Ad-hoc sign when no certificate is configured
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="desktop/target/${{ matrix.target }}/release/bundle/macos/DeepTutor.app"
+          codesign --force --deep --sign - "$app"
+          echo "ad-hoc signed $app (not distributable)"
+
+      - name: Verify the macOS signature and notarization
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="desktop/target/${{ matrix.target }}/release/bundle"
+          app="$bundle/macos/DeepTutor.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=4 "$app" 2>&1 | sed -n '1,12p'
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+          echo "signed, notarized and stapled: $app"
+
+      # Tauri notarizes and staples the .app (inside the app bundle step) but
+      # not the disk image that carries it, so the dmg gets its own round trip.
+      - name: Notarize and staple the dmg
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_ID != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="$(ls desktop/target/${{ matrix.target }}/release/bundle/dmg/*.dmg | head -1)"
+          xcrun notarytool submit "$dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          echo "notarized and stapled: $dmg"
+
+      - name: Verify the Windows signature
+        if: matrix.os == 'windows-2022' && env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: |
+          $installers = Get-ChildItem -Recurse -Path desktop/target/release/bundle -Include *.exe,*.msi
+          $invalid = @()
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature $installer.FullName
+            Write-Host "$($installer.Name): $($signature.Status)"
+            if ($signature.Status -ne 'Valid') { $invalid += $installer.Name }
+          }
+          if ($invalid.Count -gt 0) {
+            throw "unsigned or invalid signature on: $($invalid -join ', ')"
+          }
+
+      - name: Collect the shell artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/shell
+          # Only what a user (or the updater) consumes: installers, the updater
+          # archive, and the signatures that go with them.
+          find desktop/target -path "*/release/bundle/*" \
+            \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.exe" -o -name "*.msi" -o -name "*.sig" \) \
+            -exec cp {} dist/shell/ \;
+          ls -l dist/shell
+
+      - name: Upload the shell artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: shell-${{ matrix.os }}
-          path: desktop/target/release/**/*
+          name: shell-${{ matrix.manifest_platform }}
+          path: dist/shell/*
+          if-no-files-found: error
+          retention-days: 14
+
+  updater:
+    name: Assemble latest.json
+    needs: shell
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download the shell artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: shell-*
+          merge-multiple: false
+
+      - name: Write the release notes
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+
+          event_path = os.environ.get("GITHUB_EVENT_PATH")
+          event = json.loads(pathlib.Path(event_path).read_text()) if event_path else {}
+          body = ((event.get("release") or {}).get("body") or "").strip()
+          if not body:
+              body = f"DeepTutor {os.environ['VERSION']}"
+          pathlib.Path("notes.md").write_text(body + "\n", encoding="utf-8")
+          print(body[:200])
+          PY
+        env:
+          # The version comes from the source of truth, not the ref, so a
+          # workflow_dispatch run cannot label the manifest with a branch name.
+          VERSION: ${{ github.ref_name }}
+
+      - name: Merge the per-platform signatures
+        env:
+          BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/
+        run: |
+          set -euo pipefail
+          version="$(python3 -c "import re,pathlib;print(re.search(r'__version__\s*=\s*[\"\\']([^\"\\']+)', pathlib.Path('deeptutor/__version__.py').read_text()).group(1))")"
+          echo "manifest version: $version"
+          published=0
+          for directory in dist/shell-*/; do
+            platform="$(basename "$directory" | sed 's/^shell-//')"
+            artifact="$(find "$directory" -name '*.app.tar.gz' -o -name '*-setup.exe' | head -1 || true)"
+            if [ -z "$artifact" ]; then
+              echo "::warning::no updater artifact in $directory"
+              continue
+            fi
+            if [ ! -f "$artifact.sig" ]; then
+              echo "::warning::no signature for $platform (TAURI_SIGNING_PRIVATE_KEY missing?)"
+              continue
+            fi
+            python3 desktop/scripts/assemble_updater_manifest.py \
+              --manifest latest.json \
+              --version "$version" \
+              --platform "$platform" \
+              --artifact "$artifact" \
+              --signature "$artifact.sig" \
+              --base-url "$BASE_URL" \
+              --notes-file notes.md
+            published=$((published + 1))
+          done
+          if [ "$published" -eq 0 ]; then
+            echo "::warning title=No update manifest::No platform produced a signed updater artifact, so latest.json is not published and installed apps will not see this release."
+          else
+            echo "latest.json covers $published platform(s):"
+            python3 -c "import json;print(sorted(json.load(open('latest.json'))['platforms']))"
+          fi
+
+      - name: Upload the manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: shell-updater-manifest
+          path: latest.json
           if-no-files-found: warn
           retention-days: 14
+
+  publish:
+    name: Publish to the release
+    # Only a published GitHub release (or an explicit workflow_dispatch) has an
+    # asset target; a plain workflow run just leaves the artifacts for download.
+    if: github.event_name == 'release' || inputs.publish
+    needs: [catalog, shell, updater]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download every artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Attach the artifacts to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name || github.ref_name }}"
+          files=$(find dist -type f \( -name '*.tar.gz' -o -name '*.tar.gz.sha256' -o -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name '*.sig' -o -name 'runtime-packs.json' -o -name 'latest.json' \) | sort)
+          echo "$files"
+          if [ -z "$files" ]; then
+            echo "::error::nothing to publish"
+            exit 1
+          fi
+          # shellcheck disable=SC2086
+          gh release upload "$tag" $files --clobber

@@ -354,6 +354,20 @@ v1 平台矩阵已定为 **macOS(arm64 / x64) + Windows(x64)**（已拍板）。
 
 发布通道：**仅 `stable` 一条**（已拍板），指向 `releases/latest` 的 `latest.json`。预发布 tag 只产出构建产物，不更新 `latest.json`，因此不会推送给普通用户。
 
+✅ **已落地（2026-09-24 收尾）**：这条流水线不再是草图，且本机能验证的部分都验证过了。
+
+| 事实 | 说明 |
+| --- | --- |
+| 更新密钥 | 私钥 `~/.tauri/deeptutor-updater.key`（待写入 CI secret）；公钥提交在 `plugins.updater.pubkey` |
+| 外壳更新 | `available / up_to_date / error` 三种状态；确认对话框 → 下载 → 验签 → 安装 → 重启；设置页同一入口 |
+| 无头自检 | `--check-updates`（两条通道，只读）、`--verify-shell-update`（下载+验签）、`--install-shell-update`（真装） |
+| 清单生成 | `desktop/scripts/assemble_updater_manifest.py` 逐平台合并；`.sig` 是 base64 包着 minisign，脚本会解码校验结构 |
+| 证书缺席时 | macOS ad-hoc 签名并告警；不生成 `latest.json`（宁可不发通道，也不发一条假的） |
+| 已实测 | 1.6.10 → 1.6.11 全链路更新成功；篡改产物被拒（exit 1）；`.app` 的深链与文件关联 UTI 齐全 |
+| 待证书/runner | 真机签名+公证、Windows nsis/msi 与签名、macOS x64 包 |
+
+密钥与降级矩阵见 [`desktop/RELEASE_SIGNING.md`](../../desktop/RELEASE_SIGNING.md)。
+
 ### 5.6 签名、公证与安全
 
 - **macOS**：Developer ID Application 证书 + `notarytool` 公证 + `stapler`。**不要开启 App Sandbox**（沙箱下无法 spawn python/node，等于放弃这套架构）；因此不上 Mac App Store，走 DMG 直发——这与"自动化更新"的目标一致。
@@ -448,9 +462,11 @@ v1 平台矩阵已定为 **macOS(arm64 / x64) + Windows(x64)**（已拍板）。
 - [x] `runtime.lock.txt` + `build_pack.py`：python-build-standalone 3.12.14 + 可重定位 venv + Node 20.18.0 + `deeptutor_web`。macOS arm64 实测 762MB 树 / 257MB 归档；x64 与 Windows 代码就绪、由 CI 矩阵覆盖。
 - [x] 胖包直发：`--install-pack <tar.gz> --sha256 …` 本地解包安装（24s，离线可用）；`--install-pack <url>` / `--update-pack --catalog` 走同一段校验/解包/rehydrate/冒烟逻辑。
 - [x] `runtime_pack.rs`：清单解析、摘要校验（坏包写入前拒绝）、防路径穿越解包、rehydrate（`--relocatable` 不够，见报告）、冒烟、原子切换、`state.json` 记录与回滚。
-- [ ] `tauri-plugin-updater`：外壳自更新通道（依赖签名与真实 release 资产，暂缓）。
-- [ ] 更新 UX：菜单"检查更新"接入 updater 与进度/重启（同上，Phase 2 收尾）。
-- [ ] macOS 签名+公证+stapling、Windows 签名；产物齐全（dmg / nsis / msi）——流水线已写好，待证书。
+- [x] `tauri-plugin-updater`：外壳自更新通道（密钥已生成、公钥已提交、端到端实测见 §5.5）。
+- [x] 更新 UX：菜单/托盘"检查更新"接入两条通道 → 确认 → 下载 → 验签 → 安装 → 重启应用；
+      设置页同一入口；`--check-updates` / `--verify-shell-update` / `--install-shell-update` 供 CI 与脚本使用。
+- [ ] macOS 签名+公证+stapling、Windows 签名；产物齐全（dmg / nsis / msi）——流水线已补全并本地演练，
+      **待证书与 runner**：真实证书下的签名/公证、Windows nsis/msi、macOS x64 尚未实机验证。
 - [x] `desktop-release.yml`（validate → packs 三平台 → catalog → shell bundle）与 `sync_version.py`（含 `--check` 守卫，接入流水线第一步）。
 
 > 进展与端到端证据见 [`desktop/PHASE2_REPORT.md`](../../desktop/PHASE2_REPORT.md)。

@@ -155,10 +155,16 @@ jobs:
           import json
           report = json.load(open('updates.json'))
           runtime = report['runtime']
-          # The check must answer, and must not have installed anything.
+          # The runtime plane must answer, and must not have installed anything.
           assert runtime['checked'] is True, report
           assert runtime['updated'] is False, report
           assert '9.9.9' in runtime['detail'], report
-          assert report['shell_update']['status'] == 'unconfigured', report
+          # The shell plane reaches the update channel over the network, so a
+          # runner without one reports `error`. What must hold either way is that
+          # the check *ran* against this build's own version.
+          shell_update = report['shell_update']
+          assert shell_update['status'] in {'available', 'up_to_date', 'error'}, report
+          assert shell_update['current_version'], report
+          assert shell_update['detail'], report
           print('phase 3 headless smoke ok')
           "

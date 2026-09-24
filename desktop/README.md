@@ -29,6 +29,8 @@ Next.js 服务；外加原生菜单、托盘、单实例、窗口状态与错误
 | `scripts/phase0_*.sh` | 不依赖 Tauri 的握手 / 孤儿守卫验证脚本 |
 | `pack/` | 运行时包：`runtime.lock.txt`、`build_pack.py`、`assemble_catalog.py` |
 | `scripts/sync_version.py` | 版本同步与 `--check` 守卫 |
+| `scripts/assemble_updater_manifest.py` | 逐平台合并 Tauri 的 `latest.json`（含签名结构校验） |
+| `RELEASE_SIGNING.md` | 发布密钥清单、缺失时的降级行为、本地演练与自检命令 |
 
 ## 运行时包（Phase 2）
 
@@ -90,6 +92,10 @@ cargo build --locked
     [--data-dir DIR] [--no-close-to-tray] [--no-notifications]
 ./target/debug/deeptutor-desktop --shell-settings
 ./target/debug/deeptutor-desktop --check-updates [--catalog <url|path>]
+
+# 外壳更新通道（Phase 2 收尾）：下载验签 / 真装
+./target/debug/deeptutor-desktop --verify-shell-update
+./target/debug/deeptutor-desktop --install-shell-update
 
 # 真正跑起来（Phase 1 直接指向源码 checkout）
 export DEEPTUTOR_HOME="$HOME/Library/Application Support/DeepTutor"
@@ -172,6 +178,17 @@ python -m deeptutor_cli.main start \
 - **设置页**：`/settings/desktop` 在桌面外壳里是真实开关，在浏览器里降级为说明页。
 - **只读更新检查**：菜单/托盘/设置页的"检查更新"读运行时包清单并报告可用版本；外壳自更新
   通道未配置时会明说，而不是假装"已是最新"。
+
+## 两层更新（Phase 2 收尾）
+
+| 平面 | 装的是什么 | 谁在管 | 入口 |
+| --- | --- | --- | --- |
+| 运行时包 | Python、Node、前端产物 | 外壳自己（`runtime_pack.rs`） | 清单 `runtime-packs.json`；`--update-pack` / `--rollback-pack` |
+| 外壳 | 这个窗口、菜单与原生插件 | `tauri-plugin-updater`（公钥在 `tauri.conf.json`） | 通道 `latest.json`；菜单/设置页 → 下载 → 验签 → 安装 → 重启 |
+
+检查一次就会同时回答两条通道（`check_updates` / `--check-updates`）：外壳更新的签名在下载时
+校验，验签失败绝不进入安装步骤。发布密钥、"缺密钥会怎样"、以及本地演练命令见
+[`RELEASE_SIGNING.md`](RELEASE_SIGNING.md)。
 
 ## 版本
 

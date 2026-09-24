@@ -17,8 +17,7 @@ use tauri::{AppHandle, WebviewWindow};
 use tauri_plugin_deeptutor::{
     DesktopBackend, DesktopStatus, FirstRunChoices, FirstRunOutcome, FirstRunState,
     NotificationOutcome, NotificationRequest, NotificationTarget, OpenRequestPayload,
-    RuntimeSnapshot, RuntimeUpdateReport, SettingsPatch, ShellSettingsSnapshot, ShellUpdateReport,
-    UpdateReport, WindowGeometry,
+    RuntimeSnapshot, RuntimeUpdateReport, SettingsPatch, ShellSettingsSnapshot, WindowGeometry,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
@@ -933,8 +932,8 @@ impl DesktopBackend for Supervisor {
         Supervisor::apply_first_run(self, choices)
     }
 
-    fn check_updates(&self) -> UpdateReport {
-        Supervisor::check_for_updates(self)
+    fn check_runtime_updates(&self) -> RuntimeUpdateReport {
+        Supervisor::check_runtime_updates(self)
     }
 }
 
@@ -1187,12 +1186,16 @@ impl Supervisor {
         }
     }
 
-    /// Runtime-pack update check, plus an honest answer about the shell channel.
-    pub fn check_for_updates(&self) -> UpdateReport {
+    /// Runtime-pack update check. Installs when the catalog has something newer.
+    ///
+    /// The shell plane is deliberately absent here: it lives in
+    /// `tauri-plugin-deeptutor`, which owns the updater plugin, and the caller
+    /// combines both into one [`UpdateReport`].
+    pub fn check_runtime_updates(&self) -> RuntimeUpdateReport {
         let installer = PackInstaller::new(&self.config.home);
         let source = self.update_source();
 
-        let runtime = match source {
+        match source {
             None => {
                 let state = installer.state();
                 RuntimeUpdateReport {
@@ -1264,17 +1267,6 @@ impl Supervisor {
                     }
                 }
             },
-        };
-
-        UpdateReport {
-            runtime,
-            shell: ShellUpdateReport {
-                // `tauri-plugin-updater` needs a signing key and a published
-                // release asset (PHASE2_REPORT §4); until those exist the honest
-                // answer is "this build has no channel", not a fake "up to date".
-                status: "unconfigured".to_string(),
-                detail: "外壳自更新尚未配置签名密钥；请从发布页下载新版本。".to_string(),
-            },
         }
     }
 
@@ -1287,17 +1279,17 @@ impl Supervisor {
             .filter(|value| !value.is_empty())
     }
 
-    /// Read-only variant of [`Supervisor::check_for_updates`].
+    /// Read-only variant of [`Supervisor::check_runtime_updates`].
     ///
     /// Answers "is there something newer" without downloading a pack and
     /// without restarting the local service — what a headless gate
     /// (`--check-updates`) must do, and what the tray dialog could report
     /// before spending 250 MB of somebody's bandwidth.
-    pub fn preview_updates(&self, source: Option<String>) -> UpdateReport {
+    pub fn preview_runtime_updates(&self, source: Option<String>) -> RuntimeUpdateReport {
         let installer = PackInstaller::new(&self.config.home);
         let source = source.or_else(|| self.update_source());
         let state = installer.state();
-        let runtime = match source {
+        match source {
             None => RuntimeUpdateReport {
                 checked: false,
                 source: None,
@@ -1351,13 +1343,6 @@ impl Supervisor {
                     previous_pack: state.previous_pack,
                     detail: format!("检查运行时包失败：{error}"),
                 },
-            },
-        };
-        UpdateReport {
-            runtime,
-            shell: ShellUpdateReport {
-                status: "unconfigured".to_string(),
-                detail: "外壳自更新尚未配置签名密钥；请从发布页下载新版本。".to_string(),
             },
         }
     }
