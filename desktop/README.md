@@ -5,7 +5,8 @@ Next.js 服务；外加原生菜单、托盘、单实例、窗口状态与错误
 前端构建、更新交接）全部留在 `deeptutor/runtime/launcher.py`，所以 Web 与 CLI 模式不受影响。
 
 完整方案见 [`../docs-for-user/DESKTOP_TAURI_PLAN.md`](../docs-for-user/DESKTOP_TAURI_PLAN.md)；
-分阶段验证记录见 [`PHASE0_REPORT.md`](PHASE0_REPORT.md) 与 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)。
+分阶段验证记录见 [`PHASE0_REPORT.md`](PHASE0_REPORT.md)、
+[`PHASE1_REPORT.md`](PHASE1_REPORT.md) 与 [`PHASE2_REPORT.md`](PHASE2_REPORT.md)。
 
 ## 结构
 
@@ -20,6 +21,34 @@ Next.js 服务；外加原生菜单、托盘、单实例、窗口状态与错误
 | `src-tauri/capabilities/` | `main.json`（本窗口）+ `remote-web.json`（本地 UI 的 IPC 授权） |
 | `web/` | splash 页面（内嵌，不需要 Node 构建） |
 | `scripts/phase0_*.sh` | 不依赖 Tauri 的握手 / 孤儿守卫验证脚本 |
+| `pack/` | 运行时包：`runtime.lock.txt`、`build_pack.py`、`assemble_catalog.py` |
+| `scripts/sync_version.py` | 版本同步与 `--check` 守卫 |
+
+## 运行时包（Phase 2）
+
+包 = 自带 CPython + 内含 DeepTutor 的可重定位 venv + Node + 前端产物。装好之后用户机器上
+**不需要任何 Python/Node/环境变量**。
+
+```bash
+# 构建（必须在目标平台上跑；CI 用 macos-14 / macos-13 / windows-2022 矩阵）
+python3 desktop/pack/build_pack.py                 # 产出 dist/*.tar.gz + .sha256 + .catalog.json
+python3 desktop/pack/assemble_catalog.py           # 合并成 runtime-packs.json
+
+# 安装 / 查看 / 更新 / 回滚（无头，不需要开窗口）
+deeptutor-desktop --install-pack dist/1.6.10-macos-aarch64.tar.gz --sha256 <digest>
+deeptutor-desktop --pack-status
+deeptutor-desktop --pack-catalog https://…/runtime-packs.json
+deeptutor-desktop --update-pack --catalog https://…/runtime-packs.json
+deeptutor-desktop --rollback-pack
+```
+
+装好的包放在 `<home>/runtimes/<pack_id>/`，当前使用与上一个包记录在
+`<home>/desktop/state.json`；解释器候选链里**运行时包排在 app-data venv 之前**（显式
+`DEEPTUTOR_DESKTOP_PYTHON` 仍然优先）。
+
+安装时会做四件事：校验 sha256（不匹配直接拒绝，不落盘）→ 安全解包（拒绝绝对路径与 `..`）
+→ rehydrate（把 venv 里指向构建机的绝对路径改成这台机器的）→ 冒烟（`import deeptutor_cli.main,
+deeptutor_web`）。
 
 ## 为什么外壳命令是"插件"
 

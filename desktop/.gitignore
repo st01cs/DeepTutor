@@ -1,1 +1,3 @@
 /target/
+/pack/dist/
+/pack/.cache/

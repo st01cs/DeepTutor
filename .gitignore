@@ -288,3 +288,15 @@ dmypy.json
 # ============================================
 .phase0-home/
 .phase0-logs/
+
+# ============================================
+# Built Next.js assets copied into the deeptutor_web package by
+# scripts/prepare_web_package.py (wheel/sdist inputs, never committed).
+# Only deeptutor_web/__init__.py lives in the repository.
+# ============================================
+deeptutor_web/.next/
+deeptutor_web/public/
+deeptutor_web/node_modules/
+deeptutor_web/server.js
+deeptutor_web/package.json
+deeptutor_web/BUILD_INFO

@@ -432,13 +432,15 @@ v1 平台矩阵已定为 **macOS(arm64 / x64) + Windows(x64)**（已拍板）。
 
 ### Phase 2 — 运行时包、签名与更新（2–3 周，1–2 人）
 
-- [ ] `runtime.lock.json` + `build_pack.py`：python-build-standalone + wheelhouse + Node + `deeptutor_web`，构建 macOS(arm64 / x64) 与 Windows(x64) 三个包。
-- [ ] 胖包直发：安装载荷携带运行时包，首启从本地解包（离线可用）；联网下载作为兜底路径。
-- [ ] `runtime_pack.rs`：定位/校验/解包/冒烟/原子切换/回滚，`local` 与 `remote` 两种 source 共用同一路径。
-- [ ] `tauri-plugin-updater`：单一 stable 通道的 `latest.json` 与 `runtime-packs.json`。
-- [ ] 更新 UX：检查更新 → 进度 → "重启以应用" → 复用既有 `VersionCheckService` 拿到的 Release 说明展示更新日志。
-- [ ] macOS 签名+公证+stapling、Windows 签名；产物齐全（dmg / nsis / msi）。
-- [ ] `desktop-release.yml` 全流程跑通，`sync_version.py` 接入发布守卫测试。
+- [x] `runtime.lock.txt` + `build_pack.py`：python-build-standalone 3.12.14 + 可重定位 venv + Node 20.18.0 + `deeptutor_web`。macOS arm64 实测 762MB 树 / 257MB 归档；x64 与 Windows 代码就绪、由 CI 矩阵覆盖。
+- [x] 胖包直发：`--install-pack <tar.gz> --sha256 …` 本地解包安装（24s，离线可用）；`--install-pack <url>` / `--update-pack --catalog` 走同一段校验/解包/rehydrate/冒烟逻辑。
+- [x] `runtime_pack.rs`：清单解析、摘要校验（坏包写入前拒绝）、防路径穿越解包、rehydrate（`--relocatable` 不够，见报告）、冒烟、原子切换、`state.json` 记录与回滚。
+- [ ] `tauri-plugin-updater`：外壳自更新通道（依赖签名与真实 release 资产，暂缓）。
+- [ ] 更新 UX：菜单"检查更新"接入 updater 与进度/重启（同上，Phase 2 收尾）。
+- [ ] macOS 签名+公证+stapling、Windows 签名；产物齐全（dmg / nsis / msi）——流水线已写好，待证书。
+- [x] `desktop-release.yml`（validate → packs 三平台 → catalog → shell bundle）与 `sync_version.py`（含 `--check` 守卫，接入流水线第一步）。
+
+> 进展与端到端证据见 [`desktop/PHASE2_REPORT.md`](../../desktop/PHASE2_REPORT.md)。
 
 **退出标准**：从 `1.6.10` 更新到 `1.6.11`：外壳与运行时各自独立更新成功、用户数据完整、中断下载后重启能自愈、投毒一个坏包能被外壳拒绝并回滚；断网环境下首次安装（胖包）可用。
 

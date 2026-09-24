@@ -1,0 +1,188 @@
+name: Desktop Release
+
+# Builds the desktop artifacts on a release tag (or on demand):
+#   * one runtime pack per platform, with a per-platform catalog fragment
+#   * a merged runtime-packs.json the shell reads to update itself
+#   * the shell bundles (dmg / nsis / msi)
+#
+# Packs must be built on their own platform: a relocatable venv still contains
+# that platform's interpreter and wheels. The shell bundles are signed with
+# repository secrets; when a secret is absent the bundle step still builds but
+# is left unsigned, which is why the signing steps are conditional.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Upload artifacts to the GitHub release for this tag"
+        type: boolean
+        default: false
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Shell version must match deeptutor/__version__.py
+        run: python3 desktop/scripts/sync_version.py --check
+
+      - name: The dependency lock must match pyproject.toml
+        run: |
+          set -euo pipefail
+          pip install --quiet uv
+          uv pip compile pyproject.toml --extra cli --extra server \
+            --python-version 3.12 --quiet -o /tmp/runtime.lock.txt
+          diff -u desktop/pack/runtime.lock.txt /tmp/runtime.lock.txt
+
+  packs:
+    name: Runtime pack (${{ matrix.platform }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-aarch64
+            os: macos-14
+          - platform: macos-x86_64
+            os: macos-13
+          - platform: windows-x86_64
+            os: windows-2022
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install uv
+        run: pip install --quiet uv
+
+      - name: Build the web frontend once per platform
+        working-directory: web
+        run: |
+          npm ci --legacy-peer-deps
+          npm run build
+
+      - name: Build the runtime pack
+        run: python3 desktop/pack/build_pack.py --skip-web-build --platform ${{ matrix.platform }}
+
+      - name: Upload the pack and its catalog fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-pack-${{ matrix.platform }}
+          path: |
+            desktop/pack/dist/*.tar.gz
+            desktop/pack/dist/*.tar.gz.sha256
+            desktop/pack/dist/*.catalog.json
+          if-no-files-found: error
+          retention-days: 14
+
+  catalog:
+    name: Assemble runtime-packs.json
+    needs: packs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download every pack fragment
+        uses: actions/download-artifact@v4
+        with:
+          path: desktop/pack/dist
+          pattern: runtime-pack-*
+          merge-multiple: true
+
+      - name: Merge the fragments
+        run: |
+          python3 desktop/pack/assemble_catalog.py \
+            --dist desktop/pack/dist \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/"
+
+      - name: Publish the catalog
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-packs
+          path: desktop/pack/dist/runtime-packs.json
+          if-no-files-found: error
+
+  shell:
+    name: Shell bundle (${{ matrix.os }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy --no-self-update
+          rustup default stable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install the Tauri CLI
+        run: npm install --global @tauri-apps/cli@^2
+
+      # `tauri icon` regenerates .icns/.ico from the PNG the repository ships;
+      # the bundle targets refuse to build without them.
+      - name: Generate the icon set
+        run: tauri icon desktop/src-tauri/icons/icon.png --output desktop/src-tauri/icons
+
+      - name: Build the bundle (unsigned when no certificate is configured)
+        working-directory: desktop/src-tauri
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: tauri build --no-bundle
+
+      - name: Upload the shell
+        uses: actions/upload-artifact@v4
+        with:
+          name: shell-${{ matrix.os }}
+          path: desktop/target/release/**/*
+          if-no-files-found: warn
+          retention-days: 14

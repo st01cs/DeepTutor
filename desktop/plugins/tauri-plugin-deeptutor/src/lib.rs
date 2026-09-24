@@ -45,6 +45,8 @@ pub struct DesktopStatus {
     pub home: String,
     pub workdir: String,
     pub python: String,
+    /// Active runtime pack, when the shell is running from one.
+    pub pack: Option<String>,
     pub logs_dir: String,
     /// Latest `runtime.json` contents, when the launcher has written one.
     pub runtime: Option<RuntimeSnapshot>,

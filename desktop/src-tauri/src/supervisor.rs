@@ -18,6 +18,7 @@ use tauri_plugin_deeptutor::{DesktopBackend, DesktopStatus, RuntimeSnapshot};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use crate::runtime_info::{RuntimeInfo, SUPPORTED_SCHEMA_VERSION};
+use crate::runtime_pack::{InstalledPack, PackInstaller};
 
 /// The launcher can spend minutes on a first production frontend build; this
 /// timeout only exists so a wedged child does not leave a splash forever.
@@ -76,6 +77,15 @@ impl ShellConfig {
                 must_exist: true,
             });
         }
+        // A runtime pack is the installed-product path: it needs no environment
+        // variables at all, which is the whole point of Phase 2.
+        if let Some(pack) = self.active_pack() {
+            candidates.push(InterpreterCandidate {
+                path: pack.manifest.python_path(&pack.dir),
+                source: "runtime pack",
+                must_exist: true,
+            });
+        }
         candidates.push(InterpreterCandidate {
             path: venv_python(&self.home),
             source: "<home>/.venv",
@@ -96,6 +106,11 @@ impl ShellConfig {
             });
         }
         candidates
+    }
+
+    /// The runtime pack the shell was told to use, if any.
+    pub fn active_pack(&self) -> Option<InstalledPack> {
+        PackInstaller::new(&self.home).active()
     }
 
     /// First candidate that can actually import the launcher.
@@ -472,6 +487,26 @@ impl Supervisor {
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
 
+        // A pack brings its own Node; the launcher finds it through PATH
+        // (`shutil.which("node")`) and would otherwise need the user to have one.
+        if let Some(pack) = self.config.active_pack() {
+            let node_dir = pack.manifest.node_dir(&pack.dir);
+            if node_dir.exists() {
+                let mut paths = vec![node_dir.clone()];
+                if let Some(current) = std::env::var_os("PATH") {
+                    paths.extend(std::env::split_paths(&current));
+                }
+                if let Ok(joined) = std::env::join_paths(paths) {
+                    command.env("PATH", joined);
+                }
+                self.append_shell_log(&format!(
+                    "runtime pack {} active; node from {}",
+                    pack.pack_id,
+                    node_dir.display()
+                ));
+            }
+        }
+
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -770,6 +805,7 @@ impl DesktopBackend for Supervisor {
             home: self.config.home.to_string_lossy().into_owned(),
             workdir: self.config.workdir.to_string_lossy().into_owned(),
             python: self.interpreter_for_display(),
+            pack: self.config.active_pack().map(|pack| pack.pack_id),
             logs_dir: self.config.logs_dir.to_string_lossy().into_owned(),
             runtime,
         }
