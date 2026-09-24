@@ -60,7 +60,32 @@ export DEEPTUTOR_DESKTOP_PYTHON="/path/to/DeepTutor/.venv/bin/python"
 | --- | --- | --- |
 | `DEEPTUTOR_HOME` | macOS `~/Library/Application Support/DeepTutor` | 运行时目录（`data/`、`desktop/`） |
 | `DEEPTUTOR_DESKTOP_WORKDIR` | 同 `DEEPTUTOR_HOME` | launcher 的工作目录；Phase 1 指向仓库根 |
-| `DEEPTUTOR_DESKTOP_PYTHON` | `<home>/.venv/bin/python` → `python3` | launcher 解释器 |
+| `DEEPTUTOR_DESKTOP_PYTHON` | 见下节 | 显式指定 launcher 解释器 |
+
+## 解释器与运行环境
+
+外壳按顺序尝试这些解释器，并**逐个用 `import deeptutor_cli.main` 实测**，取第一个真的能用的：
+
+1. `DEEPTUTOR_DESKTOP_PYTHON`（显式覆盖）
+2. `<home>/.venv/bin/python`（Phase 2 运行时包的位置）
+3. `<workdir>/.venv/bin/python`（开发时仓库里的虚拟环境）
+4. `PATH` 上的 `python3` / `python`
+
+所以从仓库开发时，**只要设 `DEEPTUTOR_DESKTOP_WORKDIR` 就够了**：
+
+```bash
+DEEPTUTOR_DESKTOP_WORKDIR=/path/to/DeepTutor ./desktop/target/debug/deeptutor-desktop
+```
+
+一个候选都没有通过时，外壳不会只说"退出码 1"，而是把每个候选的失败原因和三种修复方式写进日志、
+splash 与原生错误弹窗；launcher 启动失败时还会附上 `launcher.log` 的最后几行。
+
+排查入口：
+
+```bash
+./target/debug/deeptutor-desktop --self-check                  # 打印解析结果，始终 exit 0
+./target/debug/deeptutor-desktop --self-check --require-python  # 没解析到可用环境就 exit 1
+```
 
 外壳传给 launcher 的参数（全部是 Phase 0 落地的可选加法）：
 

@@ -35,35 +35,107 @@ pub struct ShellConfig {
     /// Working directory for the launcher: the checkout in Phase 0/1, the
     /// runtime pack afterwards.
     pub workdir: PathBuf,
-    pub python: PathBuf,
+    /// Explicit interpreter from `DEEPTUTOR_DESKTOP_PYTHON`, when set.
+    pub python_override: Option<PathBuf>,
     pub state_path: PathBuf,
     pub logs_dir: PathBuf,
 }
 
 impl ShellConfig {
     pub fn resolve() -> Self {
-        Self::resolve_with(&|key| std::env::var(key).ok(), &|path| path.exists())
+        Self::resolve_with(&|key| std::env::var(key).ok())
     }
 
-    /// Same as [`ShellConfig::resolve`] with injectable environment/FS reads so
+    /// Same as [`ShellConfig::resolve`] with an injectable environment read so
     /// the resolution rules can be tested without touching the real machine.
-    pub fn resolve_with(
-        read_env: &dyn Fn(&str) -> Option<String>,
-        exists: &dyn Fn(&Path) -> bool,
-    ) -> Self {
+    pub fn resolve_with(read_env: &dyn Fn(&str) -> Option<String>) -> Self {
         let env = |key: &str| env_path_from(read_env(key));
         let home = resolve_home_with(&env);
         let workdir = env("DEEPTUTOR_DESKTOP_WORKDIR").unwrap_or_else(|| home.clone());
-        let python =
-            env("DEEPTUTOR_DESKTOP_PYTHON").unwrap_or_else(|| default_python(&home, exists));
         Self {
             state_path: home.join("desktop").join("runtime.json"),
             logs_dir: home.join("desktop").join("logs"),
+            python_override: env("DEEPTUTOR_DESKTOP_PYTHON"),
             home,
             workdir,
-            python,
         }
     }
+
+    /// Interpreters to try, most specific first.
+    ///
+    /// The workdir venv matters: someone who simply runs the shell from a
+    /// checkout has a `.venv` next to the source, not inside the app-data home.
+    /// Phase 0 shipped without that candidate, so the shell fell through to the
+    /// system Python and reported a bare "exit code 1".
+    pub fn interpreter_candidates(&self) -> Vec<InterpreterCandidate> {
+        let mut candidates = Vec::new();
+        if let Some(explicit) = self.python_override.clone() {
+            candidates.push(InterpreterCandidate {
+                path: explicit,
+                source: "DEEPTUTOR_DESKTOP_PYTHON",
+                must_exist: true,
+            });
+        }
+        candidates.push(InterpreterCandidate {
+            path: venv_python(&self.home),
+            source: "<home>/.venv",
+            must_exist: true,
+        });
+        if self.workdir != self.home {
+            candidates.push(InterpreterCandidate {
+                path: venv_python(&self.workdir),
+                source: "<workdir>/.venv",
+                must_exist: true,
+            });
+        }
+        for name in path_python_names() {
+            candidates.push(InterpreterCandidate {
+                path: PathBuf::from(name),
+                source: "PATH",
+                must_exist: false,
+            });
+        }
+        candidates
+    }
+
+    /// First candidate that can actually import the launcher.
+    ///
+    /// Probing costs a few hundred milliseconds and buys a failure message a
+    /// user can act on, instead of a launcher that exits 1 for reasons the
+    /// dialog never mentions.
+    pub fn resolve_interpreter(&self) -> Result<InterpreterCandidate, String> {
+        let mut tried: Vec<String> = Vec::new();
+        for candidate in self.interpreter_candidates() {
+            if candidate.must_exist && !candidate.path.exists() {
+                tried.push(format!("{} — 不存在", candidate.path.display()));
+                continue;
+            }
+            if probe_interpreter(&candidate.path) {
+                return Ok(candidate);
+            }
+            tried.push(format!(
+                "{} — 无法导入 deeptutor_cli",
+                candidate.path.display()
+            ));
+        }
+        Err(format!(
+            "找不到可用的 DeepTutor 运行环境。已尝试：\n{}\n\n\
+             修复方式（任选其一）：\n\
+             1) 在仓库根目录创建虚拟环境：uv venv && uv pip install -e \".[cli,server]\"\n\
+             2) 设置 DEEPTUTOR_DESKTOP_PYTHON 指向可用的解释器\n\
+             3) 运行 `deeptutor-desktop --self-check` 查看解析结果",
+            tried.join("\n")
+        ))
+    }
+}
+
+/// One interpreter candidate plus where it came from, for diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterpreterCandidate {
+    pub path: PathBuf,
+    pub source: &'static str,
+    /// PATH lookups cannot be pre-checked; venv paths can.
+    pub must_exist: bool,
 }
 
 fn env_path_from(raw: Option<String>) -> Option<PathBuf> {
@@ -97,17 +169,42 @@ fn resolve_home_with(env: &dyn Fn(&str) -> Option<PathBuf>) -> PathBuf {
     PathBuf::from("DeepTutor")
 }
 
-fn default_python(home: &Path, exists: &dyn Fn(&Path) -> bool) -> PathBuf {
-    let venv = home.join(".venv");
-    let candidate = if cfg!(windows) {
+fn venv_python(root: &Path) -> PathBuf {
+    let venv = root.join(".venv");
+    if cfg!(windows) {
         venv.join("Scripts").join("python.exe")
     } else {
         venv.join("bin").join("python")
-    };
-    if exists(&candidate) {
-        return candidate;
     }
-    PathBuf::from(if cfg!(windows) { "python" } else { "python3" })
+}
+
+fn path_python_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["python.exe", "python"]
+    } else {
+        &["python3", "python"]
+    }
+}
+
+/// Does this interpreter have DeepTutor's CLI installed?
+fn probe_interpreter(path: &Path) -> bool {
+    let mut command = Command::new(path);
+    command
+        .arg("-c")
+        .arg("import deeptutor_cli.main")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// Outcome of one launch attempt.
@@ -146,6 +243,8 @@ pub struct Supervisor {
     self_ref: OnceLock<Weak<Supervisor>>,
     /// Set once by `attach_app`; used for the native failure dialog.
     app: OnceLock<AppHandle>,
+    /// The interpreter the launcher was actually started with, for diagnostics.
+    interpreter: Mutex<Option<InterpreterCandidate>>,
 }
 
 impl Supervisor {
@@ -163,6 +262,7 @@ impl Supervisor {
             restart_lock: Mutex::new(()),
             self_ref: OnceLock::new(),
             app: OnceLock::new(),
+            interpreter: Mutex::new(None),
         });
         let _ = supervisor.self_ref.set(Arc::downgrade(&supervisor));
         supervisor
@@ -282,9 +382,15 @@ impl Supervisor {
                 }
             }
             if let Some(code) = self.take_exit_code() {
-                return Handshake::Failed(format!(
-                    "本地服务启动失败（退出码 {code}），请查看日志。"
-                ));
+                // "Exit code 1" alone sends people to the wrong place; the last
+                // lines of the launcher log are what actually name the cause.
+                let mut message = format!("本地服务启动失败（退出码 {code}）。");
+                let tail = self.launcher_log_tail(6);
+                if !tail.is_empty() {
+                    message.push_str("\n\n");
+                    message.push_str(&tail);
+                }
+                return Handshake::Failed(message);
             }
             if Instant::now() >= deadline {
                 return Handshake::Failed("本地服务启动超时，请查看日志。".to_string());
@@ -323,6 +429,15 @@ impl Supervisor {
         if let Err(error) = fs::create_dir_all(&self.config.logs_dir) {
             return Err(format!("无法创建日志目录: {error}"));
         }
+        let interpreter = self.config.resolve_interpreter()?;
+        self.append_shell_log(&format!(
+            "using interpreter {} (from {})",
+            interpreter.path.display(),
+            interpreter.source
+        ));
+        if let Ok(mut cache) = self.interpreter.lock() {
+            *cache = Some(interpreter.clone());
+        }
         // Start from a clean slate: the launcher writes "starting" only after
         // its own imports, and the poll loop must not read last run's file in
         // that window.
@@ -336,7 +451,7 @@ impl Supervisor {
             .try_clone()
             .map_err(|error| format!("无法复用日志句柄: {error}"))?;
 
-        let mut command = Command::new(&self.config.python);
+        let mut command = Command::new(&interpreter.path);
         command
             .arg("-m")
             .arg("deeptutor_cli.main")
@@ -374,7 +489,7 @@ impl Supervisor {
         let child = command.spawn().map_err(|error| {
             format!(
                 "无法启动 Python launcher ({})：{error}",
-                self.config.python.display()
+                interpreter.path.display()
             )
         })?;
         *self.child.lock().expect("child lock poisoned") = Some(child);
@@ -553,6 +668,21 @@ impl Supervisor {
         &self.config.logs_dir
     }
 
+    /// Last non-empty lines of `launcher.log`, for the failure dialog.
+    fn launcher_log_tail(&self, lines: usize) -> String {
+        let Ok(text) = fs::read_to_string(self.config.logs_dir.join("launcher.log")) else {
+            return String::new();
+        };
+        let mut tail: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .rev()
+            .take(lines)
+            .collect();
+        tail.reverse();
+        tail.join("\n")
+    }
+
     /// SIGTERM the launcher's process group, then SIGKILL after a grace period.
     /// Safe to call when nothing is running.
     fn terminate_child(&self) {
@@ -639,7 +769,7 @@ impl DesktopBackend for Supervisor {
                 .unwrap_or_default(),
             home: self.config.home.to_string_lossy().into_owned(),
             workdir: self.config.workdir.to_string_lossy().into_owned(),
-            python: self.config.python.to_string_lossy().into_owned(),
+            python: self.interpreter_for_display(),
             logs_dir: self.config.logs_dir.to_string_lossy().into_owned(),
             runtime,
         }
@@ -651,6 +781,23 @@ impl DesktopBackend for Supervisor {
 
     fn note_caller(&self, origin: &str) {
         self.append_shell_log(&format!("webview-ipc ok: invoke received from {origin}"));
+    }
+}
+
+impl Supervisor {
+    /// Cached resolution when known, otherwise the most specific candidate.
+    /// Never probes: the status command is polled by the UI.
+    fn interpreter_for_display(&self) -> String {
+        if let Ok(cache) = self.interpreter.lock() {
+            if let Some(candidate) = cache.as_ref() {
+                return candidate.path.to_string_lossy().into_owned();
+            }
+        }
+        self.config
+            .interpreter_candidates()
+            .first()
+            .map(|candidate| candidate.path.to_string_lossy().into_owned())
+            .unwrap_or_default()
     }
 }
 
@@ -726,22 +873,17 @@ mod tests {
             .collect()
     }
 
-    fn config_with(pairs: &[(&str, &str)], venv_present: bool) -> ShellConfig {
+    fn config_with(pairs: &[(&str, &str)]) -> ShellConfig {
         let map = env_map(pairs);
-        ShellConfig::resolve_with(&|key| map.get(key).cloned(), &move |path| {
-            venv_present && path.to_string_lossy().contains(".venv")
-        })
+        ShellConfig::resolve_with(&|key| map.get(key).cloned())
     }
 
     #[test]
     fn explicit_home_wins_and_owns_the_state_layout() {
-        let config = config_with(
-            &[
-                ("DEEPTUTOR_HOME", "/tmp/deeptutor"),
-                ("HOME", "/Users/example"),
-            ],
-            false,
-        );
+        let config = config_with(&[
+            ("DEEPTUTOR_HOME", "/tmp/deeptutor"),
+            ("HOME", "/Users/example"),
+        ]);
         assert_eq!(config.home, PathBuf::from("/tmp/deeptutor"));
         assert_eq!(
             config.state_path,
@@ -757,29 +899,23 @@ mod tests {
 
     #[test]
     fn workdir_override_is_honoured() {
-        let config = config_with(
-            &[
-                ("DEEPTUTOR_HOME", "/tmp/deeptutor"),
-                ("DEEPTUTOR_DESKTOP_WORKDIR", "/src/DeepTutor"),
-            ],
-            false,
-        );
+        let config = config_with(&[
+            ("DEEPTUTOR_HOME", "/tmp/deeptutor"),
+            ("DEEPTUTOR_DESKTOP_WORKDIR", "/src/DeepTutor"),
+        ]);
         assert_eq!(config.workdir, PathBuf::from("/src/DeepTutor"));
         assert_eq!(config.home, PathBuf::from("/tmp/deeptutor"));
     }
 
     #[test]
     fn blank_environment_values_fall_through() {
-        let config = config_with(
-            &[("DEEPTUTOR_HOME", "   "), ("HOME", "/Users/example")],
-            false,
-        );
+        let config = config_with(&[("DEEPTUTOR_HOME", "   "), ("HOME", "/Users/example")]);
         assert!(config.home.ends_with("DeepTutor"));
     }
 
     #[test]
     fn platform_default_home_matches_documented_location() {
-        let config = config_with(&[("HOME", "/Users/example")], false);
+        let config = config_with(&[("HOME", "/Users/example")]);
         if cfg!(target_os = "macos") {
             assert_eq!(
                 config.home,
@@ -794,24 +930,52 @@ mod tests {
     }
 
     #[test]
-    fn bundled_interpreter_wins_over_path_lookup() {
-        let bundled = config_with(&[("DEEPTUTOR_HOME", "/tmp/deeptutor")], true);
-        assert!(bundled.python.to_string_lossy().contains(".venv"));
-
-        let fallback = config_with(&[("DEEPTUTOR_HOME", "/tmp/deeptutor")], false);
-        let name = fallback.python.to_string_lossy().to_string();
-        assert!(name == "python" || name == "python3", "unexpected: {name}");
+    fn bundled_venv_is_preferred_over_path_lookup() {
+        let config = config_with(&[("DEEPTUTOR_HOME", "/tmp/deeptutor")]);
+        let candidates = config.interpreter_candidates();
+        assert!(candidates[0].path.to_string_lossy().contains(".venv"));
+        assert_eq!(candidates[0].source, "<home>/.venv");
+        // The last resort is whatever is on PATH; `resolve_interpreter` probes
+        // it before it is ever used.
+        assert_eq!(candidates.last().unwrap().source, "PATH");
     }
 
     #[test]
-    fn explicit_interpreter_override_wins() {
-        let config = config_with(
-            &[
-                ("DEEPTUTOR_HOME", "/tmp/deeptutor"),
-                ("DEEPTUTOR_DESKTOP_PYTHON", "/opt/py/bin/python3"),
-            ],
-            true,
-        );
-        assert_eq!(config.python, PathBuf::from("/opt/py/bin/python3"));
+    fn workdir_venv_is_tried_after_the_app_data_venv() {
+        let config = config_with(&[
+            ("DEEPTUTOR_HOME", "/tmp/deeptutor"),
+            ("DEEPTUTOR_DESKTOP_WORKDIR", "/src/DeepTutor"),
+        ]);
+        let sources: Vec<&str> = config
+            .interpreter_candidates()
+            .iter()
+            .map(|candidate| candidate.source)
+            .collect();
+        assert_eq!(sources[0], "<home>/.venv");
+        assert_eq!(sources[1], "<workdir>/.venv");
+        assert_eq!(sources[2], "PATH");
+    }
+
+    #[test]
+    fn workdir_equal_to_home_does_not_duplicate_candidates() {
+        let config = config_with(&[("DEEPTUTOR_HOME", "/tmp/deeptutor")]);
+        let sources: Vec<&str> = config
+            .interpreter_candidates()
+            .iter()
+            .map(|candidate| candidate.source)
+            .collect();
+        assert_eq!(sources, vec!["<home>/.venv", "PATH", "PATH"]);
+    }
+
+    #[test]
+    fn explicit_interpreter_is_the_first_candidate() {
+        let config = config_with(&[
+            ("DEEPTUTOR_HOME", "/tmp/deeptutor"),
+            ("DEEPTUTOR_DESKTOP_PYTHON", "/opt/py/bin/python3"),
+        ]);
+        let candidates = config.interpreter_candidates();
+        assert_eq!(candidates[0].source, "DEEPTUTOR_DESKTOP_PYTHON");
+        assert_eq!(candidates[0].path, PathBuf::from("/opt/py/bin/python3"));
+        assert!(candidates[0].must_exist);
     }
 }

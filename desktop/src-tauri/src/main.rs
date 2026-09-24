@@ -22,22 +22,47 @@ fn main() {
     // Headless smoke test for CI: resolve the shell configuration and print it
     // without starting the launcher or opening a window, so it also works on a
     // runner that has no display.
-    if std::env::args().any(|arg| arg == "--self-check") {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--self-check") {
         let config = ShellConfig::resolve();
+        let candidates: Vec<serde_json::Value> = config
+            .interpreter_candidates()
+            .into_iter()
+            .map(|candidate| {
+                serde_json::json!({
+                    "path": candidate.path,
+                    "source": candidate.source,
+                    "exists": candidate.path.exists(),
+                })
+            })
+            .collect();
+        let resolved = config.resolve_interpreter();
+        let python_ok = resolved.is_ok();
         let payload = serde_json::json!({
             "shell": "deeptutor-desktop",
             "mode": "self-check",
             "home": config.home,
             "workdir": config.workdir,
-            "python": config.python,
             "state_path": config.state_path,
             "logs_dir": config.logs_dir,
-            "python_exists": config.python.exists(),
+            "python": resolved
+                .as_ref()
+                .ok()
+                .map(|candidate| candidate.path.to_string_lossy().into_owned()),
+            "python_source": resolved.as_ref().ok().map(|candidate| candidate.source),
+            "python_ok": python_ok,
+            "python_error": resolved.as_ref().err(),
+            "python_candidates": candidates,
         });
         println!(
             "{}",
             serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
         );
+        // `--require-python` turns the diagnostic into a gate, for callers that
+        // really do need a runnable environment.
+        if !python_ok && args.iter().any(|arg| arg == "--require-python") {
+            std::process::exit(1);
+        }
         return;
     }
 

@@ -72,8 +72,9 @@ Phase 1 的功能面已全部落地并在真实栈上验证：外壳命令插件
 cd desktop
 cargo fmt --all -- --check          # OK
 cargo clippy --locked --all-targets -- -D warnings   # OK（无警告）
-cargo test --locked                 # 6 passed（配置解析：home/workdir 覆盖、空白环境变量、
-                                    #            平台默认路径、内置解释器优先、显式覆盖）
+cargo test --locked                 # 8 passed（配置解析：home/workdir 覆盖、空白环境变量、
+                                    #            平台默认路径、解释器候选顺序、workdir venv、
+                                    #            显式覆盖优先、同目录不重复）
 ./target/debug/deeptutor-desktop --self-check
 ```
 
@@ -93,12 +94,23 @@ cargo test --locked                 # 6 passed（配置解析：home/workdir 覆
 
 Python 侧回归：`tests/runtime` + `tests/services/test_app_update.py` 共 **219 passed / 4 skipped**。
 
-## 4. 过程中的两个坑（已修）
+## 4. 过程中的三个坑（已修）
 
 1. **`Builder::new` 的类型参数**：`tauri::plugin::Builder<R, C = ()>` 不写 turbofish 时
    整条链会落到默认 runtime，返回类型对不上；`Builder::<R, ()>::new(...)` 解决。
 2. **插件命令的运行时泛型**：命令参数不能写 `tauri::WebviewWindow`（默认 runtime），
    必须 `tauri::WebviewWindow<R>`；否则 `CommandArg` 在泛型插件里不成立。
+3. **解释器回退到系统 Python（用户报障"启动失败，退出码 1"）**：不设
+   `DEEPTUTOR_DESKTOP_PYTHON` 时外壳只找 `<home>/.venv`，找不到就回退 `PATH` 上的
+   `python3`——Homebrew 的 3.14 没有项目依赖，launcher 退出码 1，而对话框只显示了这个数字。
+   修复：候选链增加 `<workdir>/.venv`；每个候选都用 `import deeptutor_cli.main` 实测；
+   全部失败时给出逐条原因 + 三种修复方式，并附 `launcher.log` 末尾几行；`--self-check`
+   报告解析出的解释器、来源与候选清单（`--require-python` 可当门禁）。
+
+   验证：只设 `DEEPTUTOR_DESKTOP_WORKDIR=<repo>` 启动 → 日志
+   `using interpreter <repo>/.venv/bin/python (from <workdir>/.venv)`，`runtime.json`
+   进入 `ready`，端口 8001/3782（用户环境下的默认值）；故意指向无效解释器时 shell.log
+   列出五个候选的失败原因并 exit 1。
 
 ## 5. 遗留（Phase 2 起）
 
