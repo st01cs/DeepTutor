@@ -281,3 +281,10 @@ dmypy.json
 *.mp3
 *.wav
 *.ogg
+
+# ============================================
+# Desktop shell Phase 0 verification artifacts
+# (produced by desktop/scripts/phase0_*.sh)
+# ============================================
+.phase0-home/
+.phase0-logs/

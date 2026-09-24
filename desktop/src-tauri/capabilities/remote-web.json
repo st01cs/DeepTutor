@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/remote-schema.json",
+  "identifier": "deeptutor-web-remote",
+  "description": "Lets the loopback-served DeepTutor UI call the desktop shell (notifications, dialogs, updater in later phases).",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
+  },
+  "permissions": ["core:default"]
+}

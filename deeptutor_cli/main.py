@@ -142,11 +142,34 @@ def start(
         "--open-browser/--no-browser",
         help="Open the frontend automatically after startup.",
     ),
+    runtime_info: Path | None = typer.Option(
+        None,
+        "--runtime-info",
+        help="Write machine-readable launcher state (ports, URL, ready/stopped) to this file.",
+    ),
+    auto_ports: bool = typer.Option(
+        False,
+        "--auto-ports",
+        help="Pick free ports automatically instead of prompting when a port is taken.",
+    ),
+    parent_pid: int | None = typer.Option(
+        None,
+        "--parent-pid",
+        help="Exit when this process disappears (orphan guard for a desktop shell).",
+    ),
 ) -> None:
     """Launch backend + frontend together. Source installs default to production."""
     from deeptutor.runtime.launcher import start as start_web
 
-    start_web(home=home, dev=dev, detach=detach, open_browser=open_browser)
+    start_web(
+        home=home,
+        dev=dev,
+        detach=detach,
+        open_browser=open_browser,
+        runtime_info=runtime_info,
+        auto_ports=auto_ports,
+        parent_pid=parent_pid,
+    )
 
 
 @app.command()

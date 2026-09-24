@@ -30,7 +30,7 @@ from deeptutor.runtime.home import (
 )
 from deeptutor.runtime.memory_probe import SUPERVISOR_PID_ENV
 from deeptutor.runtime.process import is_process_alive
-from deeptutor.services.app_update import LAUNCHER_PID_ENV
+from deeptutor.services.app_update import DESKTOP_SHELL_ENV, LAUNCHER_PID_ENV
 
 BACKEND_READY_TIMEOUT_ENV = "DEEPTUTOR_BACKEND_READY_TIMEOUT"
 FRONTEND_READY_TIMEOUT_ENV = "DEEPTUTOR_FRONTEND_READY_TIMEOUT"
@@ -73,6 +73,9 @@ LOOPBACK_HOSTS = ("127.0.0.1", "::1")
 DETACHED_WORKER_ENV = "DEEPTUTOR_DETACHED_WORKER"
 DETACHED_TOKEN_ENV = "DEEPTUTOR_DETACHED_TOKEN"
 DETACHED_RUNTIME_DIR = Path("data") / "user" / "runtime"
+# Bumped whenever the runtime-state payload changes shape, so a desktop shell
+# can fail fast instead of guessing at an unknown file.
+RUNTIME_INFO_SCHEMA_VERSION = 1
 
 
 def _apply_single_user_allocator_env(env: dict[str, str]) -> None:
@@ -124,6 +127,41 @@ class DetachedLauncherPaths:
     state: Path
     stop: Path
     log: Path
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeInfoWriter:
+    """Machine-readable launcher state for an attached desktop shell.
+
+    ``--detach`` already writes a similar file for ``deeptutor stop``; this one
+    exists for the opposite topology, where a parent process is watching the
+    launcher and needs ports *and* a ready/stopped signal without parsing the
+    human-facing log.
+    """
+
+    path: Path
+    token: str
+    home: Path
+
+    def write(self, status: str, **fields: object) -> None:
+        payload: dict[str, Any] = {
+            "schema_version": RUNTIME_INFO_SCHEMA_VERSION,
+            "status": status,
+            "token": self.token,
+            "pid": os.getpid(),
+            "home": str(self.home),
+            "updated_at": time.time(),
+        }
+        payload.update(fields)
+        try:
+            from deeptutor.services.file_io import atomic_write_json
+
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(self.path, payload)
+        except Exception:
+            # A shell that cannot read its own state file must never be able to
+            # take the launcher down with it.
+            pass
 
 
 def _log(message: str) -> None:
@@ -513,17 +551,60 @@ def _kill_port_listeners(listeners: dict[int, list[tuple[int, str]]]) -> None:
             _log(_t("start.port_freed", port=port))
 
 
+def _auto_resolve_ports(
+    *,
+    backend_port: int,
+    frontend_port: int,
+    backend_taken: bool,
+    frontend_taken: bool,
+    check_frontend: bool,
+) -> tuple[int, int]:
+    """Pick free ports without asking, retrying if a probe-and-bind race loses.
+
+    ``_suggest_free_port`` can only observe that a port *looks* free; another
+    process may take it before the child binds it. Retrying a few times turns
+    that race into a slower start instead of a failed one — the alternative,
+    handing a desktop shell a port it cannot bind, has no user-visible recovery.
+    """
+
+    candidate_backend = backend_port
+    candidate_frontend = frontend_port
+    skip_backend = backend_taken
+    skip_frontend = frontend_taken
+    for _attempt in range(8):
+        candidate_backend = _suggest_free_port(
+            candidate_backend + 1 if skip_backend else candidate_backend,
+            {candidate_frontend} if check_frontend else set(),
+        )
+        candidate_frontend = frontend_port
+        if check_frontend:
+            candidate_frontend = _suggest_free_port(
+                candidate_frontend + 1 if skip_frontend else candidate_frontend,
+                {candidate_backend},
+            )
+        if not _port_accepts_connection(candidate_backend) and (
+            not check_frontend or not _port_accepts_connection(candidate_frontend)
+        ):
+            return candidate_backend, candidate_frontend
+        skip_backend = True
+        skip_frontend = check_frontend
+    return candidate_backend, candidate_frontend
+
+
 def _resolve_port_conflicts(
     *,
     backend_port: int,
     frontend_port: int,
     check_frontend: bool,
     settings_dir: Path,
+    auto_ports: bool = False,
 ) -> tuple[int, int]:
     """Return free ``(backend_port, frontend_port)``, resolving conflicts interactively.
 
     When stdin is not a TTY (Docker, CI), falls back to exiting with the
-    historical ``start.port_in_use`` message.
+    historical ``start.port_in_use`` message. ``auto_ports`` replaces both
+    behaviours with "pick the next free port and remember it", which is what a
+    desktop shell needs: it has no terminal to answer with.
     """
     while True:
         roles = [("start.backend", backend_port)]
@@ -542,6 +623,23 @@ def _resolve_port_conflicts(
                 _log(_t("start.port_conflict_unknown_proc"))
             for pid, command in entries:
                 _log(_t("start.port_conflict_proc", pid=pid, command=command))
+
+        if auto_ports:
+            backend_taken = any(key == "start.backend" for key, _port in occupied)
+            frontend_taken = any(key == "start.frontend" for key, _port in occupied)
+            new_backend, new_frontend = _auto_resolve_ports(
+                backend_port=backend_port,
+                frontend_port=frontend_port,
+                backend_taken=backend_taken,
+                frontend_taken=frontend_taken,
+                check_frontend=check_frontend,
+            )
+            if new_backend != backend_port:
+                _log(_t("start.auto_ports", port=backend_port, new_port=new_backend))
+            if new_frontend != frontend_port:
+                _log(_t("start.auto_ports", port=frontend_port, new_port=new_frontend))
+            _persist_ports(settings_dir, new_backend, new_frontend)
+            return new_backend, new_frontend
 
         if sys.stdin is None or not sys.stdin.isatty():
             joined = ", ".join(str(port) for _key, port in occupied)
@@ -1260,6 +1358,9 @@ def start(
     dev: bool = False,
     detach: bool = False,
     open_browser: bool = True,
+    runtime_info: str | Path | None = None,
+    auto_ports: bool = False,
+    parent_pid: int | None = None,
 ) -> None:
     _relax_console_encoding()
     runtime_home = get_runtime_home(home)
@@ -1272,9 +1373,27 @@ def start(
     global _ACTIVE_LABELS
     language = resolve_language()
     _ACTIVE_LABELS = labels_for(language)
+    desktop_shell = os.getenv(DESKTOP_SHELL_ENV, "").strip() == "1"
     if detach:
+        if runtime_info is not None or parent_pid is not None:
+            raise SystemExit(
+                "--runtime-info and --parent-pid describe an attached parent process; "
+                "drop --detach to use them."
+            )
         _launch_detached(runtime_home, dev=dev, open_browser=open_browser)
         return
+
+    runtime_info_writer: RuntimeInfoWriter | None = None
+    if runtime_info is not None:
+        # Publish "starting" before the slow steps (dependency check, production
+        # frontend build, port probing) so a desktop shell can show progress
+        # instead of timing out on a window that looks hung.
+        runtime_info_writer = RuntimeInfoWriter(
+            path=Path(runtime_info).expanduser(),
+            token=secrets.token_urlsafe(16),
+            home=runtime_home,
+        )
+        runtime_info_writer.write("starting")
 
     detached_token = os.getenv(DETACHED_TOKEN_ENV, "").strip()
     detached_worker = os.getenv(DETACHED_WORKER_ENV) == "1" and bool(detached_token)
@@ -1339,6 +1458,10 @@ def start(
         frontend_port=frontend_port,
         check_frontend=existing_frontend is None,
         settings_dir=settings.settings_dir,
+        # A desktop shell owns no terminal, so the interactive prompt would
+        # simply deadlock it; the environment flag covers shells that forgot
+        # to pass the flag.
+        auto_ports=auto_ports or desktop_shell,
     )
     if (resolved_backend, resolved_frontend) != (backend_port, frontend_port):
         backend_port, frontend_port = resolved_backend, resolved_frontend
@@ -1478,6 +1601,25 @@ def start(
             request_shutdown("STOP")
         return shutdown_requested
 
+    if parent_pid is not None:
+        # A desktop shell that is force-quit (crash, "Force Quit", Task Manager)
+        # cannot run its own cleanup, and an orphaned uvicorn + Node pair keeps
+        # the ports and the RAM. Watching the parent is the only reliable
+        # orphan guard on all three platforms.
+        def _watch_parent() -> None:
+            while not should_stop():
+                if not _is_pid_alive(parent_pid):
+                    _log(_t("start.parent_gone", pid=parent_pid))
+                    request_shutdown("PARENT")
+                    return
+                time.sleep(2)
+
+        threading.Thread(
+            target=_watch_parent,
+            name="deeptutor-parent-watch",
+            daemon=True,
+        ).start()
+
     def cleanup() -> None:
         nonlocal cleanup_started
         if cleanup_started:
@@ -1487,6 +1629,8 @@ def start(
         _terminate(backend)
         if detached_paths is not None:
             _clear_detached_runtime(detached_paths, detached_token)
+        if runtime_info_writer is not None:
+            runtime_info_writer.write("stopped")
 
     _install_signal_handlers(
         request_shutdown,
@@ -1535,6 +1679,17 @@ def start(
         if should_stop():
             return
         _complete_restarted_update(runtime_home)
+        if runtime_info_writer is not None:
+            # Ports are published only now: a shell that reads them earlier
+            # would have to re-read them after every conflict resolution.
+            runtime_info_writer.write(
+                "ready",
+                backend_port=backend_port,
+                frontend_port=frontend_port,
+                backend_url=f"http://127.0.0.1:{backend_port}",
+                frontend_url=frontend_url,
+                frontend_kind=frontend.kind,
+            )
         if detached_paths is not None:
             _mark_detached_ready(
                 detached_paths,

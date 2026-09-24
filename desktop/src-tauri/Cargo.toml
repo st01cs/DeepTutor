@@ -1,0 +1,25 @@
+[package]
+name = "deeptutor-desktop"
+# Kept identical to deeptutor/__version__.py by desktop/scripts/sync_version.py
+# (Phase 2). Until that script lands, bump both by hand.
+version = "1.6.10"
+edition = "2021"
+rust-version = "1.77"
+description = "DeepTutor desktop shell (Tauri v2) — Phase 0 skeleton"
+license = "Apache-2.0"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+# Process-group signalling for the orphan guard: the launcher owns two children
+# (uvicorn + Node) and a plain child.kill() would leave both running.
+libc = "0.2"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
