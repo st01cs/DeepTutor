@@ -8,28 +8,45 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "DeepTutor",
-        "url": "index.html",
-        "width": 1100,
-        "height": 720,
-        "minWidth": 760,
-        "minHeight": 520,
-        "resizable": true,
-        "center": true,
-        "dragDropEnabled": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["deeptutor"]
+      }
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.png"],
+    "fileAssociations": [
+      {
+        "ext": ["pdf"],
+        "name": "PDF document",
+        "description": "PDF document",
+        "role": "Viewer",
+        "mimeType": "application/pdf"
+      },
+      {
+        "ext": ["epub"],
+        "name": "EPUB book",
+        "description": "EPUB book",
+        "role": "Viewer",
+        "mimeType": "application/epub+zip"
+      },
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown document",
+        "description": "Markdown document",
+        "role": "Editor",
+        "mimeType": "text/markdown"
+      }
+    ],
     "macOS": {
       "minimumSystemVersion": "11.0"
     }

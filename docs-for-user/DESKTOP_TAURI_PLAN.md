@@ -318,6 +318,19 @@ Rust                      Python launcher            uvicorn / node
 
 "后端代理桥"（`/api/desktop/*`）降级为备选：只有当将来必须让 UI 调用某个**无法插件化**的能力时才启用。
 
+✅ **Phase 3 实测补充（2026-09-24）**：
+
+| 议题 | 结论 |
+| --- | --- |
+| 通知"点击回到会话" | 桌面通知 API **没有点击回调**（`show()` 即结束，权限在桌面端恒为 granted）。做法：外壳保存"这次通知指向哪个会话"，在应用重新活跃时投递——窗口获得焦点后 UI 领走，或 macOS `RunEvent::Reopen`（点 Dock/通知）时由外壳 `reveal()` + 事件推送。**边界**：窗口藏在托盘且用户直接点通知横幅时，系统只激活应用、不通知我们"点的是哪一条"，此时托盘图标是回程入口 |
+| 通知/深链/文件的投递通道 | 统一为"队列 + 事件"：`deeptutor://open-request`、`deeptutor://notification-target`，配合 destructive `take_*` 命令。`withGlobalTauri` 只保证 core 模块，所以前端同时按 5s 轮询队列兜底，且"取走即清空"保证不会重复投递 |
+| 前端桥在桌面侧的真实可达性 | 内置探针（loopback 页面内 eval）新增 `shell_settings` 调用，实测 `shell-settings-ok=true/true/zh-CN`，证明 Phase 3 新增命令的 ACL 授权生效 |
+| 关窗语义 | 窗口只隐藏、不销毁（否则托盘无法叫回）。`close_to_tray=false` 时关窗=真正退出（`stop()` + `exit(0)`），避免留下没有窗口的僵尸应用 |
+| 下载落盘 | 主窗口改为**代码创建**（`tauri.conf.json` 里已无窗口声明），因为 `on_download` / `on_navigation` 只存在于 builder。导出固定落 `~/Downloads` + 重名加序号；macOS 完成的回调不返回路径，所以目标路径由外壳自己记住 |
+| 首启向导的语言步骤 | 只写外壳偏好，应用界面语言仍归应用自己的设置页（staged 草稿模式，外壳绕写会造成 SSR/客户端语言不一致）。向导把用户送到设置页完成模型/密钥 |
+| 数据目录搬迁 | 指针写在**平台默认 home** 的 `desktop/bootstrap.json`（外壳在知道数据在哪之前只能读那里）；目标目录不存在则忽略该指针并回退默认位置，不会在别处静默新建 profile |
+| 设置页"桌面"分区 | 浏览器模式下**降级**而不是隐藏：导航树在 SSR 也会渲染，用 `window.__TAURI__` 决定条目是否存在必然造成 hydration 不匹配 |
+
 ### 5.5 版本、更新与打包
 
 **版本唯一真源不变**：`deeptutor/__version__.py`。新增 `desktop/scripts/sync_version.py`，构建前把它写进 `tauri.conf.json`、`Cargo.toml`、`runtime-packs.json`，并把"三者一致"加进 `tests/test_release_workflow_guards.py` 的既有守卫。
@@ -446,14 +459,17 @@ v1 平台矩阵已定为 **macOS(arm64 / x64) + Windows(x64)**（已拍板）。
 
 ### Phase 3 — 桌面体验补全（2–3 周）
 
-- [ ] 托盘（显示/隐藏、重启服务、检查更新、退出）+ 关闭窗口到托盘（可配置）+ 长任务继续运行。
-- [ ] 系统通知（回合完成、长任务完成）+ 点击回到对应会话。
-- [ ] 原生文件对话框（附件、知识库上传）、导出后"在文件夹中显示"。
-- [ ] `deeptutor://` 深链与文件关联（PDF/EPUB/MD），拖到 Dock 图标也能打开。
-- [ ] 首启向导：语言、模型/密钥、数据目录、可选扩展（复用 `scripts/install_extras.py` 模式做按需下载）。
-- [ ] 前端 `isDesktop()` 探测与降级：浏览器模式下这些入口隐藏或退化为 Web 行为。
+- [x] 托盘（显示/隐藏、重启服务、检查更新、退出）+ 关闭窗口到托盘（可配置）+ 长任务继续运行。
+- [x] 系统通知（回合完成）+ 点击回到对应会话（机制与边界见 §5.4）。
+- [x] 原生文件对话框（附件、知识库上传路径）、导出后"在文件夹中显示"。
+- [x] `deeptutor://` 深链与文件关联（PDF/EPUB/MD），拖到 Dock 图标也能打开（同一队列）。
+- [x] 首启向导：语言、桌面行为、数据目录 + 模型/密钥**交接**给应用设置页（见 §5.4）；可选扩展下载留 backlog。
+- [x] 前端 `isDesktop()` 探测与降级：浏览器模式下入口"退化为 Web 行为"（桌面页说明 + 全部 no-op）。
 
 **退出标准**：窗口隐藏后完成一次 `deep_research`，能在系统通知里看到结果并点击回到该会话；三种模式的功能差异仅限"原生增强项"。
+
+> 进展与实测证据见 [`desktop/PHASE3_REPORT.md`](../../desktop/PHASE3_REPORT.md)。仍需人工点检：
+> 托盘图标外观、通知横幅与点击回程、WKWebView 的 PDF/EPUB/拖拽渲染、打包版才注册的深链与文件关联。
 
 > 已拍板移出 v1：API Key 迁移到 OS 密钥库（进 backlog，v1 保持现有 `settings/*.json` 存储）。
 

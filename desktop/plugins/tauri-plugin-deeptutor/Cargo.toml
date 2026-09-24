@@ -13,6 +13,13 @@ links = "tauri-plugin-deeptutor"
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Native dialogs and "reveal in folder" are plugin-local: they need the calling
+# window, not shell state, so they never cross the DesktopBackend trait.
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+# Base64 for `read_local_file` (a file dropped on the Dock icon travels to the
+# UI as bytes so it can reuse the web upload pipeline).
+base64 = "0.22"
 
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }

@@ -26,7 +26,7 @@ export const SETTINGS_PAGE_GROUPS: { label: Lang; keys: string[] }[] = [
   },
   {
     label: { en: 'System', zh: '系统' },
-    keys: ['network', 'status', 'about'],
+    keys: ['network', 'status', 'desktop', 'about'],
   },
   { label: { en: 'Archived', zh: '已归档' }, keys: ['archive'] },
 ]

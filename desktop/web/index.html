@@ -34,9 +34,12 @@
         box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
         text-align: center;
       }
-      .logo { width: 72px; height: 72px; border-radius: 18px; }
+      .card.wide { width: min(640px, 90vw); text-align: left; }
+      .card.wide .logo, .card.wide h1 { display: block; }
+      .card.wide h1 { text-align: center; }
+      .logo { width: 72px; height: 72px; border-radius: 18px; margin: 0 auto; }
       h1 { margin: 18px 0 6px; font-size: 22px; font-weight: 600; letter-spacing: 0.2px; }
-      .status { margin: 0 0 6px; font-size: 15px; }
+      .status { margin: 0 0 6px; font-size: 15px; text-align: center; }
       .hint { margin: 0; color: var(--muted); font-size: 13px; }
       .probe {
         margin: 18px 0 0;
@@ -51,7 +54,6 @@
         overflow: auto;
       }
       button {
-        margin-top: 18px;
         padding: 8px 16px;
         border-radius: 9px;
         border: 1px solid rgba(255, 255, 255, 0.12);
@@ -61,12 +63,61 @@
         cursor: pointer;
       }
       button:hover { border-color: var(--accent); color: var(--accent); }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #0b1120;
+        font-weight: 600;
+      }
+      button.primary:hover { filter: brightness(1.08); color: #0b1120; }
+      button:disabled { opacity: 0.4; cursor: default; }
+      .steps { margin: 22px 0 4px; min-height: 190px; }
+      .step { display: block; }
+      .step[hidden] { display: none; }
+      .step h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+      .step p { margin: 0 0 14px; }
+      .choices { display: flex; gap: 10px; }
+      .choices button { flex: 1; padding: 14px; font-size: 14px; }
+      .choices button[aria-pressed="true"] {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .value {
+        margin: 0 0 12px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.3);
+        color: var(--muted);
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        word-break: break-all;
+      }
+      .row { display: flex; gap: 10px; }
+      .toggle {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        padding: 10px 0;
+        font-size: 14px;
+      }
+      .toggle input { margin-top: 3px; }
+      .footer {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 22px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
+      }
+      .footer .spacer { flex: 1; }
+      .error { color: var(--danger); }
       body.error .status { color: var(--danger); }
       body.error .hint { color: var(--muted); }
     </style>
   </head>
   <body>
-    <main class="card">
+    <!-- Startup / failure view. Rust drives it through `window.setStatus` and
+         `window.showError`, which is also what the Phase 0 self-check reads. -->
+    <main id="splash" class="card" hidden>
       <img class="logo" src="logo.png" alt="DeepTutor" />
       <h1>DeepTutor</h1>
       <p id="status" class="status">正在启动本地服务 ...</p>
@@ -77,9 +128,63 @@
       <button id="probe-button" type="button">桌面桥自检</button>
       <pre id="probe" class="probe" hidden></pre>
     </main>
+
+    <!-- First-run wizard. Runs on the app origin (no remote URL involved), and
+         only records *shell* choices: the model and API key belong to the web
+         app's own settings page, which the wizard hands off to at the end. -->
+    <main id="wizard" class="card wide" hidden>
+      <img class="logo" src="logo.png" alt="DeepTutor" />
+      <h1 id="wizard-title">欢迎使用 DeepTutor</h1>
+      <div class="steps">
+        <section class="step" id="step-locale">
+          <h2 id="locale-heading">界面语言</h2>
+          <p class="hint" id="locale-hint"></p>
+          <div class="choices">
+            <button type="button" data-locale="zh-CN">中文</button>
+            <button type="button" data-locale="en">English</button>
+          </div>
+        </section>
+        <section class="step" id="step-data" hidden>
+          <h2 id="data-heading">数据目录</h2>
+          <p class="hint" id="data-hint"></p>
+          <p class="value" id="data-dir"></p>
+          <div class="row">
+            <button type="button" id="pick-dir"></button>
+            <button type="button" id="reset-dir"></button>
+          </div>
+        </section>
+        <section class="step" id="step-behaviour" hidden>
+          <h2 id="behaviour-heading">桌面行为</h2>
+          <p class="hint" id="behaviour-hint"></p>
+          <label class="toggle">
+            <input type="checkbox" id="opt-tray" checked />
+            <span id="opt-tray-label"></span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="opt-notify" checked />
+            <span id="opt-notify-label"></span>
+          </label>
+        </section>
+        <section class="step" id="step-done" hidden>
+          <h2 id="done-heading"></h2>
+          <p class="hint" id="done-hint"></p>
+          <p><button type="button" id="wizard-later" hidden></button></p>
+          <p class="error" id="wizard-error" hidden></p>
+        </section>
+      </div>
+      <div class="footer">
+        <button type="button" id="wizard-back"></button>
+        <span class="spacer"></span>
+        <span class="hint" id="wizard-progress"></span>
+        <button type="button" id="wizard-next" class="primary"></button>
+      </div>
+    </main>
+
     <script>
       const statusEl = document.getElementById("status");
       const probeEl = document.getElementById("probe");
+      const splashEl = document.getElementById("splash");
+      const wizardEl = document.getElementById("wizard");
 
       // Called from Rust through WebviewWindow::eval.
       window.setStatus = (text) => {
@@ -91,24 +196,262 @@
         probeEl.hidden = true;
       };
 
-      function shellBridge() {
+      function bridge() {
         return window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
+      }
+
+      async function invoke(command, args) {
+        const core = bridge();
+        if (!core) throw new Error("no shell bridge: window.__TAURI__ is undefined");
+        return core.invoke("plugin:deeptutor|" + command, args);
       }
 
       document.getElementById("probe-button").addEventListener("click", async () => {
         probeEl.hidden = false;
-        const bridge = shellBridge();
-        if (!bridge) {
-          probeEl.textContent = "no shell bridge: window.__TAURI__ is undefined";
-          return;
-        }
         try {
-          const payload = await bridge.invoke("plugin:deeptutor|desktop_status");
+          const payload = await invoke("desktop_status");
           probeEl.textContent = JSON.stringify(payload, null, 2);
         } catch (error) {
           probeEl.textContent = "invoke failed: " + error;
         }
       });
+
+      const STEPS = ["locale", "data", "behaviour", "done"];
+      const COPY = {
+        "zh-CN": {
+          title: "欢迎使用 DeepTutor",
+          localeHeading: "界面语言",
+          localeHint: "随时可以在「设置 → 通用」中修改。",
+          dataHeading: "数据目录",
+          dataHint: "知识库、会话与设置都会存放在这里。改动会在重启应用后生效。",
+          pickDir: "选择文件夹 …",
+          resetDir: "使用默认位置",
+          behaviourHeading: "桌面行为",
+          behaviourHint: "后续都可以在菜单栏「DeepTutor → 偏好」或设置页中修改。",
+          tray: "关闭窗口时隐藏到托盘（后台任务继续运行）",
+          notify: "回合完成时发送系统通知",
+          doneHeading: "可以开始了",
+          doneHint:
+            "模型与 API Key 在应用内的「设置 → 模型」中填写；完成后就能开始对话。",
+          back: "上一步",
+          next: "下一步",
+          start: "开始使用",
+          restart: "立即重启应用",
+          restartHint: "数据目录已更改，重启后生效。",
+          later: "稍后再说，先继续使用当前目录",
+          progress: (index) => `第 ${index + 1} / ${STEPS.length} 步`,
+        },
+        en: {
+          title: "Welcome to DeepTutor",
+          localeHeading: "Language",
+          localeHint: "You can change this later in Settings → General.",
+          dataHeading: "Data directory",
+          dataHint:
+            "Knowledge bases, sessions and settings live here. A change applies after the app restarts.",
+          pickDir: "Choose folder …",
+          resetDir: "Use the default location",
+          behaviourHeading: "Desktop behaviour",
+          behaviourHint:
+            "Both can be changed later from the DeepTutor menu or the settings page.",
+          tray: "Hide to the tray when the window closes (background work continues)",
+          notify: "Send a system notification when a round finishes",
+          doneHeading: "You are all set",
+          doneHint:
+            "Add your model and API key in Settings → Models, then start chatting.",
+          back: "Back",
+          next: "Next",
+          start: "Get started",
+          restart: "Restart the app now",
+          restartHint: "The data directory changed; it applies after a restart.",
+          later: "Not now — keep using the current directory",
+          progress: (index) => `Step ${index + 1} of ${STEPS.length}`,
+        },
+      };
+
+      const state = {
+        step: 0,
+        locale: "zh-CN",
+        defaultLocale: "zh-CN",
+        dataDir: "",
+        home: "",
+        defaultHome: "",
+        closeToTray: true,
+        notifications: true,
+        finished: false,
+        restartRequired: false,
+      };
+
+      function copy() {
+        return COPY[state.locale] || COPY["zh-CN"];
+      }
+
+      function render() {
+        const text = copy();
+        document.documentElement.lang = state.locale;
+        document.getElementById("wizard-title").textContent = text.title;
+        document.getElementById("locale-heading").textContent = text.localeHeading;
+        document.getElementById("locale-hint").textContent = text.localeHint;
+        document.getElementById("data-heading").textContent = text.dataHeading;
+        document.getElementById("data-hint").textContent = text.dataHint;
+        document.getElementById("pick-dir").textContent = text.pickDir;
+        document.getElementById("reset-dir").textContent = text.resetDir;
+        document.getElementById("behaviour-heading").textContent = text.behaviourHeading;
+        document.getElementById("behaviour-hint").textContent = text.behaviourHint;
+        document.getElementById("opt-tray-label").textContent = text.tray;
+        document.getElementById("opt-notify-label").textContent = text.notify;
+        document.getElementById("done-heading").textContent = state.restartRequired
+          ? text.restartHint
+          : text.doneHeading;
+        document.getElementById("done-hint").textContent = text.doneHint;
+        document.getElementById("wizard-back").textContent = text.back;
+        document.getElementById("wizard-next").textContent = state.finished
+          ? state.restartRequired
+            ? text.restart
+            : text.start
+          : text.next;
+        document.getElementById("wizard-next").disabled = false;
+        document.getElementById("wizard-back").disabled = state.step === 0 || state.finished;
+        document.getElementById("wizard-progress").textContent = text.progress(state.step);
+        // The "later" escape hatch only exists when a relaunch is actually
+        // pending; otherwise there is nothing to postpone.
+        const later = document.getElementById("wizard-later");
+        later.hidden = !(state.finished && state.restartRequired);
+        later.textContent = text.later;
+        for (const step of STEPS) {
+          document.getElementById("step-" + step).hidden = STEPS[state.step] !== step;
+        }
+        document.getElementById("data-dir").textContent = state.dataDir || state.home;
+        for (const button of document.querySelectorAll("[data-locale]")) {
+          button.setAttribute(
+            "aria-pressed",
+            String(button.dataset.locale === state.locale),
+          );
+        }
+        document.getElementById("opt-tray").checked = state.closeToTray;
+        document.getElementById("opt-notify").checked = state.notifications;
+      }
+
+      function showError(text) {
+        const error = document.getElementById("wizard-error");
+        error.hidden = false;
+        error.textContent = text;
+      }
+
+      async function apply() {
+        try {
+          const outcome = await invoke("apply_first_run", {
+            choices: {
+              locale: state.locale,
+              // The backend treats an empty string as "keep the default".
+              data_dir: state.dataDir || null,
+              close_to_tray: state.closeToTray,
+              notifications: state.notifications,
+            },
+          });
+          state.finished = true;
+          state.restartRequired = Boolean(outcome.restart_required);
+          if (state.restartRequired) {
+            // The supervisor is told not to launch until the wizard is done;
+            // a data-directory change only lands after a relaunch.
+            render();
+            return;
+          }
+          enterSplash();
+        } catch (error) {
+          showError(String(error));
+        }
+      }
+
+      function enterSplash() {
+        wizardEl.hidden = true;
+        splashEl.hidden = false;
+      }
+
+      document.getElementById("pick-dir").addEventListener("click", async () => {
+        try {
+          const picked = await invoke("pick_folder", {
+            options: { title: copy().dataHeading },
+          });
+          if (picked) state.dataDir = picked;
+          render();
+        } catch (error) {
+          showError(String(error));
+        }
+      });
+
+      document.getElementById("reset-dir").addEventListener("click", () => {
+        state.dataDir = "";
+        render();
+      });
+
+      document.getElementById("opt-tray").addEventListener("change", (event) => {
+        state.closeToTray = event.target.checked;
+      });
+      document.getElementById("opt-notify").addEventListener("change", (event) => {
+        state.notifications = event.target.checked;
+      });
+      for (const button of document.querySelectorAll("[data-locale]")) {
+        button.addEventListener("click", () => {
+          state.locale = button.dataset.locale;
+          render();
+        });
+      }
+
+      document.getElementById("wizard-back").addEventListener("click", () => {
+        if (state.step > 0) {
+          state.step -= 1;
+          render();
+        }
+      });
+
+      document.getElementById("wizard-next").addEventListener("click", async () => {
+        if (state.finished) {
+          if (state.restartRequired) {
+            await invoke("restart_app");
+          } else {
+            enterSplash();
+          }
+          return;
+        }
+        if (STEPS[state.step] === "done") {
+          await apply();
+          return;
+        }
+        state.step += 1;
+        render();
+      });
+
+      document.getElementById("wizard-later").addEventListener("click", () => {
+        // The shell already launched the service against the *current* data
+        // directory, so continuing is safe; the new directory waits in
+        // bootstrap.json until the next launch.
+        enterSplash();
+      });
+
+      async function boot() {
+        try {
+          const first = await invoke("first_run_state");
+          if (first.completed) {
+            enterSplash();
+            return;
+          }
+          state.locale = first.locale || first.default_locale || "zh-CN";
+          state.defaultLocale = first.default_locale || state.locale;
+          state.home = first.home;
+          state.defaultHome = first.default_home;
+          state.closeToTray = first.close_to_tray;
+          state.notifications = first.notifications;
+          wizardEl.hidden = false;
+          render();
+        } catch (error) {
+          // Without the bridge there is nothing useful to show a user, but a
+          // blank window would be worse than the startup view.
+          enterSplash();
+          window.setStatus("无法读取首次设置状态：" + String(error));
+        }
+      }
+
+      boot();
     </script>
   </body>
 </html>

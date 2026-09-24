@@ -5,6 +5,7 @@ import ThemeScript from "@/components/ThemeScript";
 import ToastViewport from "@/components/common/ToastViewport";
 import MotionProvider from "@/components/common/MotionProvider";
 import SettingsReturnTracker from "@/components/settings/SettingsReturnTracker";
+import DesktopBridge from "@/features/desktop/DesktopBridge";
 import { WorkspaceNavigation } from "@/components/workspaces/WorkspaceNavigation";
 import { AppShellProvider } from "@/context/AppShellContext";
 import { I18nClientBridge } from "@/i18n/I18nClientBridge";
@@ -56,6 +57,8 @@ export default function RootLayout({
       >
         <AppShellProvider>
           <SettingsReturnTracker />
+          {/* No-op in a browser: the shell queues only exist in the desktop app. */}
+          <DesktopBridge />
           <WorkspaceNavigation />
           <MotionProvider>
             <I18nClientBridge>{children}</I18nClientBridge>

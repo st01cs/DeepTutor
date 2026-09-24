@@ -77,6 +77,7 @@ import {
   resolveLoadedRunStatus,
 } from "@/lib/chat-idle-recovery";
 import i18n from "i18next";
+import { notifyDesktopRoundComplete } from "@/features/desktop/round-notification";
 import {
   normalizeBookReferences,
   type BookReferencePayload,
@@ -1779,6 +1780,21 @@ export function ChatStateAdapterProvider({
             user_message_id?: number;
             assistant_message_id?: number;
           } | null;
+          // Desktop shell only: a round that finishes while the app is in the
+          // background posts a system notification whose target is this
+          // session. Browser/CLI mode is a no-op inside the helper.
+          const finished = stateRef.current.sessions[effectiveKey];
+          const lastAssistant = [...(finished?.messages ?? [])]
+            .reverse()
+            .find((message) => message.role === "assistant");
+          notifyDesktopRoundComplete({
+            sessionId: finished?.sessionId ?? null,
+            sessionTitle: finished?.sessionTitle ?? null,
+            content: lastAssistant?.rawContent ?? lastAssistant?.content ?? null,
+            backgrounded:
+              typeof document !== "undefined" &&
+              (document.hidden || !document.hasFocus()),
+          });
           const assistantMessageId = doneMeta?.assistant_message_id ?? null;
           if (assistantMessageId != null) {
             dispatch({

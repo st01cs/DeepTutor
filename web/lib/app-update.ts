@@ -1,6 +1,12 @@
 import { apiFetch, apiUrl } from "@/lib/api";
 
-export type InstallMode = "pypi" | "source" | "docker" | "unknown";
+export type InstallMode =
+  | "pypi"
+  | "source"
+  | "docker"
+  /** Owned by the desktop shell: it updates the runtime pack, not this install. */
+  | "desktop"
+  | "unknown";
 export type UpdateJobStatus =
   | "pending"
   | "handoff"

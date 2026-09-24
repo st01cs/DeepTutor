@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-first-run-state"
+description = "Enables the first_run_state command without any pre-configured scope."
+commands.allow = ["first_run_state"]
+
+[[permission]]
+identifier = "deny-first-run-state"
+description = "Denies the first_run_state command without any pre-configured scope."
+commands.deny = ["first_run_state"]

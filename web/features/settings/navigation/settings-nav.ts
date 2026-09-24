@@ -17,6 +17,7 @@ import {
   ListChecks,
   MessagesSquare,
   Mic,
+  MonitorSmartphone,
   Network,
   Palette,
   Paperclip,
@@ -534,6 +535,21 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     },
     icon: Info,
     href: "/settings#about",
+  },
+  {
+    // Desktop-shell preferences (tray, notifications, runtime pack, logs).
+    // Deliberately *not* hidden in a browser: the entry explains what the
+    // desktop app adds, and hiding it from the hub would mean deciding
+    // server-side whether a client-only shell exists, which is a hydration
+    // mismatch waiting to happen. The page itself degrades instead.
+    key: "desktop",
+    label: { zh: "桌面应用", en: "Desktop app" },
+    blurb: {
+      zh: "托盘、通知与本地运行时",
+      en: "Tray, notifications, and the local runtime",
+    },
+    icon: MonitorSmartphone,
+    href: "/settings#desktop",
   },
 ];
 

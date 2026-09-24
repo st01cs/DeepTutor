@@ -4,7 +4,26 @@
 /// loopback-served UI can call `plugin:app|version` but is rejected for an
 /// application command (`desktop_probe not allowed. Plugin not found`), so
 /// anything the UI has to reach lives here instead.
-const COMMANDS: &[&str] = &["desktop_status", "restart_service"];
+const COMMANDS: &[&str] = &[
+    // Phase 1: shell state + restart.
+    "desktop_status",
+    "restart_service",
+    // Phase 3: preferences, notifications, handoffs and native file access.
+    "shell_settings",
+    "update_shell_settings",
+    "notify_round_complete",
+    "take_notification_target",
+    "take_open_request",
+    "first_run_state",
+    "apply_first_run",
+    "check_updates",
+    "log_event",
+    "pick_files",
+    "pick_folder",
+    "reveal_in_folder",
+    "read_local_file",
+    "restart_app",
+];
 
 fn main() {
     tauri_plugin::Builder::new(COMMANDS).build();

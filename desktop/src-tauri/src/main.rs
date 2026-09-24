@@ -12,13 +12,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod deeplink;
+mod handoff;
+mod notify;
 mod runtime_info;
 mod runtime_pack;
+mod settings;
 mod supervisor;
+mod window;
 
 use std::sync::Arc;
 
-use tauri::{Manager, RunEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_deeptutor::DesktopBackend;
 
 use runtime_pack::{InstalledPack, PackInstaller};
@@ -29,6 +35,19 @@ use supervisor::{ShellConfig, Supervisor};
 enum Headless {
     SelfCheck {
         require_python: bool,
+    },
+    /// First-run state, as the wizard would read it.
+    FirstRunStatus,
+    /// Answer the wizard from a script (installers, CI, support).
+    CompleteFirstRun {
+        locale: String,
+        data_dir: Option<String>,
+        close_to_tray: bool,
+        notifications: bool,
+    },
+    ShellSettings,
+    CheckUpdates {
+        catalog: Option<String>,
     },
     PackStatus,
     PackCatalog {
@@ -55,6 +74,25 @@ fn headless_mode(args: &[String]) -> Option<Headless> {
     if flag("--self-check") {
         return Some(Headless::SelfCheck {
             require_python: flag("--require-python"),
+        });
+    }
+    if flag("--first-run-status") {
+        return Some(Headless::FirstRunStatus);
+    }
+    if flag("--shell-settings") {
+        return Some(Headless::ShellSettings);
+    }
+    if flag("--complete-first-run") {
+        return Some(Headless::CompleteFirstRun {
+            locale: value("--locale").unwrap_or_else(|| "zh-CN".to_string()),
+            data_dir: value("--data-dir"),
+            close_to_tray: !flag("--no-close-to-tray"),
+            notifications: !flag("--no-notifications"),
+        });
+    }
+    if flag("--check-updates") {
+        return Some(Headless::CheckUpdates {
+            catalog: value("--catalog"),
         });
     }
     if flag("--pack-status") {
@@ -98,6 +136,85 @@ fn pack_summary(pack: &InstalledPack) -> serde_json::Value {
 fn run_headless(mode: Headless) -> i32 {
     let config = ShellConfig::resolve();
     match mode {
+        Headless::ShellSettings => {
+            let supervisor = Supervisor::new_shared(config);
+            print_json(
+                &serde_json::to_value(supervisor.shell_settings())
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            0
+        }
+
+        Headless::FirstRunStatus => {
+            let supervisor = Supervisor::new_shared(config);
+            let state = supervisor.first_run_state();
+            print_json(&serde_json::json!({
+                "shell": "deeptutor-desktop",
+                "mode": "first-run-status",
+                "settings": supervisor.shell_settings(),
+                "first_run": {
+                    "completed": state.completed,
+                    "locale": state.locale,
+                    "default_locale": state.default_locale,
+                    "close_to_tray": state.close_to_tray,
+                    "notifications": state.notifications,
+                    "home": state.home,
+                    "default_home": state.default_home,
+                    "can_change_data_dir": state.can_change_data_dir,
+                },
+            }));
+            0
+        }
+
+        Headless::CompleteFirstRun {
+            locale,
+            data_dir,
+            close_to_tray,
+            notifications,
+        } => {
+            let supervisor = Supervisor::new_shared(config);
+            match supervisor.apply_first_run(tauri_plugin_deeptutor::FirstRunChoices {
+                locale,
+                data_dir,
+                close_to_tray,
+                notifications,
+            }) {
+                Ok(outcome) => {
+                    print_json(&serde_json::json!({
+                        "shell": "deeptutor-desktop",
+                        "mode": "complete-first-run",
+                        "restart_required": outcome.restart_required,
+                        "settings": outcome.settings,
+                    }));
+                    0
+                }
+                Err(error) => {
+                    eprintln!("首次设置写入失败: {error}");
+                    1
+                }
+            }
+        }
+
+        Headless::CheckUpdates { catalog } => {
+            // The check reads its source from the settings or this env var, and a
+            // headless run must not rewrite the user's settings just to look.
+            if let Some(catalog) = catalog {
+                std::env::set_var("DEEPTUTOR_DESKTOP_PACK_CATALOG", catalog);
+            }
+            let supervisor = Supervisor::new_shared(config);
+            // Read-only on purpose: this gate must never download a pack, and
+            // it must never restart a service from a process about to exit.
+            let report = supervisor.preview_updates(None);
+            let failed = report.runtime.detail.starts_with("检查运行时包失败");
+            print_json(&serde_json::json!({
+                "shell": "deeptutor-desktop",
+                "mode": "check-updates",
+                "runtime": report.runtime,
+                "shell_update": report.shell,
+            }));
+            i32::from(failed)
+        }
+
         Headless::SelfCheck { require_python } => {
             let candidates: Vec<serde_json::Value> = config
                 .interpreter_candidates()
@@ -120,6 +237,7 @@ fn run_headless(mode: Headless) -> i32 {
                 "state_path": config.state_path,
                 "logs_dir": config.logs_dir,
                 "active_pack": config.active_pack().map(|pack| pack.pack_id),
+                "shell_settings": Supervisor::new_shared(config.clone()).shell_settings(),
                 "python": resolved
                     .as_ref()
                     .ok()
@@ -286,12 +404,19 @@ fn main() {
     tauri::Builder::default()
         // Single instance is registered first: it decides whether this process
         // is the one that owns the app or just focuses the existing window.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // On Windows/Linux a second launch is how a deep link or a file
+            // association reaches the running app, so the arguments are part of
+            // the hand-off rather than noise.
+            let supervisor = app.state::<Arc<Supervisor>>();
+            supervisor.push_open_args(argv, "argv");
             app::reveal(app);
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_deeptutor::init(backend))
         .setup({
             let supervisor = Arc::clone(&supervisor);
@@ -299,12 +424,26 @@ fn main() {
                 app.manage(Arc::clone(&supervisor));
                 let handle = app.handle().clone();
                 supervisor.attach_app(handle.clone());
-                let window = app
-                    .get_webview_window("main")
-                    .ok_or_else(|| "主窗口未在 tauri.conf.json 中声明".to_string())?;
-                supervisor.attach_window(window);
+                // Phase 3: `deeptutor://` links and file associations. The
+                // plugin turns macOS's `RunEvent::Opened` into this event, and
+                // a cold start can itself be one (the OS launched us *because*
+                // a PDF was double-clicked), so the launch arguments are drained
+                // as well.
+                {
+                    let supervisor = Arc::clone(&supervisor);
+                    app.deep_link().on_open_url(move |event| {
+                        let urls = event.urls();
+                        supervisor.push_open_urls(urls.iter(), "deep-link");
+                    });
+                }
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    supervisor.push_open_urls(urls.iter(), "deep-link");
+                }
+                supervisor.push_open_args(std::env::args().collect::<Vec<_>>(), "argv");
                 app::install_menu(&handle)?;
                 app::install_tray(&handle)?;
+                let window = window::create_main_window(app)?;
+                supervisor.attach_window(window);
                 app.on_menu_event(|handle, event| {
                     app::on_menu_event(handle, event.id().as_ref());
                 });
@@ -314,11 +453,40 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("failed to build the DeepTutor desktop shell")
-        .run(|app_handle, event| {
-            if let RunEvent::Exit = event {
+        .run(|app_handle, event| match event {
+            RunEvent::Exit => {
                 // The launcher also watches this PID, but a normal quit can
                 // stop its two children immediately instead of within 2s.
                 app_handle.state::<Arc<Supervisor>>().stop();
             }
+            // Close-window policy: hide to the tray (the default) or really
+            // quit. The window is never actually destroyed, because the tray
+            // could not bring it back.
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { api, .. },
+                ..
+            } => {
+                if label != window::MAIN_WINDOW {
+                    return;
+                }
+                let supervisor = app_handle.state::<Arc<Supervisor>>();
+                api.prevent_close();
+                if supervisor.shell_settings().close_to_tray {
+                    if let Some(window) = app_handle.get_webview_window(&label) {
+                        let _ = window.hide();
+                    }
+                    supervisor.append_shell_log("window hidden to tray");
+                } else {
+                    supervisor.stop();
+                    app_handle.exit(0);
+                }
+            }
+            // Clicking the Dock icon (or the app being activated with nothing in
+            // front) is also the moment a notification's "come back to this
+            // session" hand-off can be delivered.
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => app::reveal(app_handle),
+            _ => {}
         });
 }

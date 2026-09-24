@@ -14,6 +14,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import Link from "next/link";
 
 import { Toggle } from "@/components/settings/Toggle";
 import {
@@ -43,6 +44,7 @@ const INSTALLATION_LABELS: Record<InstallMode, string> = {
   pypi: "PyPI package",
   source: "Source checkout",
   docker: "Docker container",
+  desktop: "Desktop app",
   unknown: "Unknown installation",
 };
 
@@ -359,9 +361,20 @@ export default function AboutSettingsPage() {
             <p className="mb-3 text-[12.5px] leading-relaxed text-[var(--muted-foreground)]">
               {t(status.installation.reason)}
             </p>
-            <code className="block overflow-x-auto rounded-lg bg-[var(--accent)]/60 px-3 py-2 text-[11.5px] text-[var(--foreground)]">
-              {status.installation.command}
-            </code>
+            {installMode === "desktop" ? (
+              // The pip path prints the command to run; the desktop app has no
+              // such command — its updates live in the shell's own menu.
+              <Link
+                href="/settings/desktop"
+                className="inline-flex rounded-lg border border-[var(--border)] px-3 py-2 text-[12px] text-[var(--foreground)]"
+              >
+                {t("Update settings")}
+              </Link>
+            ) : (
+              <code className="block overflow-x-auto rounded-lg bg-[var(--accent)]/60 px-3 py-2 text-[11.5px] text-[var(--foreground)]">
+                {status.installation.command}
+              </code>
+            )}
           </div>
         )}
 

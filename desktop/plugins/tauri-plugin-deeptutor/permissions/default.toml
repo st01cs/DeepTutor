@@ -1,6 +1,25 @@
 [default]
 description = """
 Commands the DeepTutor UI needs from the desktop shell: read the local service
-status and restart it. Granted to the loopback origin the UI is served from.
+status and restart it, read/write shell preferences, post system notifications,
+claim deep-link and file handoffs, run the first-run wizard and reach the
+native file picker. Granted to the loopback origin the UI is served from.
 """
-permissions = ["allow-desktop-status", "allow-restart-service"]
+permissions = [
+    "allow-desktop-status",
+    "allow-restart-service",
+    "allow-shell-settings",
+    "allow-update-shell-settings",
+    "allow-notify-round-complete",
+    "allow-take-notification-target",
+    "allow-take-open-request",
+    "allow-first-run-state",
+    "allow-apply-first-run",
+    "allow-check-updates",
+    "allow-log-event",
+    "allow-pick-files",
+    "allow-pick-folder",
+    "allow-reveal-in-folder",
+    "allow-read-local-file",
+    "allow-restart-app",
+]

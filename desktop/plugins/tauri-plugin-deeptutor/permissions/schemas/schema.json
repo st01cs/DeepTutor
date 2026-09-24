@@ -295,6 +295,30 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the apply_first_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-apply-first-run",
+          "markdownDescription": "Enables the apply_first_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the apply_first_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-apply-first-run",
+          "markdownDescription": "Denies the apply_first_run command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_updates command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-updates",
+          "markdownDescription": "Enables the check_updates command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_updates command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-updates",
+          "markdownDescription": "Denies the check_updates command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_status command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-status",
@@ -305,6 +329,90 @@
           "type": "string",
           "const": "deny-desktop-status",
           "markdownDescription": "Denies the desktop_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the first_run_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-first-run-state",
+          "markdownDescription": "Enables the first_run_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the first_run_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-first-run-state",
+          "markdownDescription": "Denies the first_run_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the log_event command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-log-event",
+          "markdownDescription": "Enables the log_event command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the log_event command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-log-event",
+          "markdownDescription": "Denies the log_event command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the notify_round_complete command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-notify-round-complete",
+          "markdownDescription": "Enables the notify_round_complete command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the notify_round_complete command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-notify-round-complete",
+          "markdownDescription": "Denies the notify_round_complete command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pick_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pick-files",
+          "markdownDescription": "Enables the pick_files command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pick_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pick-files",
+          "markdownDescription": "Denies the pick_files command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pick_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pick-folder",
+          "markdownDescription": "Enables the pick_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pick_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pick-folder",
+          "markdownDescription": "Denies the pick_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the read_local_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-read-local-file",
+          "markdownDescription": "Enables the read_local_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_local_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-read-local-file",
+          "markdownDescription": "Denies the read_local_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restart_app command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-restart-app",
+          "markdownDescription": "Enables the restart_app command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restart_app command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-restart-app",
+          "markdownDescription": "Denies the restart_app command without any pre-configured scope."
         },
         {
           "description": "Enables the restart_service command without any pre-configured scope.",
@@ -319,10 +427,70 @@
           "markdownDescription": "Denies the restart_service command without any pre-configured scope."
         },
         {
-          "description": "Commands the DeepTutor UI needs from the desktop shell: read the local service\nstatus and restart it. Granted to the loopback origin the UI is served from.\n\n#### This default permission set includes:\n\n- `allow-desktop-status`\n- `allow-restart-service`",
+          "description": "Enables the reveal_in_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-reveal-in-folder",
+          "markdownDescription": "Enables the reveal_in_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reveal_in_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-reveal-in-folder",
+          "markdownDescription": "Denies the reveal_in_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-settings",
+          "markdownDescription": "Enables the shell_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-settings",
+          "markdownDescription": "Denies the shell_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the take_notification_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-take-notification-target",
+          "markdownDescription": "Enables the take_notification_target command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the take_notification_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-take-notification-target",
+          "markdownDescription": "Denies the take_notification_target command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the take_open_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-take-open-request",
+          "markdownDescription": "Enables the take_open_request command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the take_open_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-take-open-request",
+          "markdownDescription": "Denies the take_open_request command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_shell_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-shell-settings",
+          "markdownDescription": "Enables the update_shell_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_shell_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-shell-settings",
+          "markdownDescription": "Denies the update_shell_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Commands the DeepTutor UI needs from the desktop shell: read the local service\nstatus and restart it, read/write shell preferences, post system notifications,\nclaim deep-link and file handoffs, run the first-run wizard and reach the\nnative file picker. Granted to the loopback origin the UI is served from.\n\n#### This default permission set includes:\n\n- `allow-desktop-status`\n- `allow-restart-service`\n- `allow-shell-settings`\n- `allow-update-shell-settings`\n- `allow-notify-round-complete`\n- `allow-take-notification-target`\n- `allow-take-open-request`\n- `allow-first-run-state`\n- `allow-apply-first-run`\n- `allow-check-updates`\n- `allow-log-event`\n- `allow-pick-files`\n- `allow-pick-folder`\n- `allow-reveal-in-folder`\n- `allow-read-local-file`\n- `allow-restart-app`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Commands the DeepTutor UI needs from the desktop shell: read the local service\nstatus and restart it. Granted to the loopback origin the UI is served from.\n\n#### This default permission set includes:\n\n- `allow-desktop-status`\n- `allow-restart-service`"
+          "markdownDescription": "Commands the DeepTutor UI needs from the desktop shell: read the local service\nstatus and restart it, read/write shell preferences, post system notifications,\nclaim deep-link and file handoffs, run the first-run wizard and reach the\nnative file picker. Granted to the loopback origin the UI is served from.\n\n#### This default permission set includes:\n\n- `allow-desktop-status`\n- `allow-restart-service`\n- `allow-shell-settings`\n- `allow-update-shell-settings`\n- `allow-notify-round-complete`\n- `allow-take-notification-target`\n- `allow-take-open-request`\n- `allow-first-run-state`\n- `allow-apply-first-run`\n- `allow-check-updates`\n- `allow-log-event`\n- `allow-pick-files`\n- `allow-pick-folder`\n- `allow-reveal-in-folder`\n- `allow-read-local-file`\n- `allow-restart-app`"
         }
       ]
     }

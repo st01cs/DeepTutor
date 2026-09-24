@@ -128,6 +128,33 @@ fn version_key(version: &str) -> Vec<u64> {
         .collect()
 }
 
+/// The newest catalog entry for this host, when it beats what is active.
+///
+/// Shared by the installing path and the read-only one so "check" and "update"
+/// can never disagree about which release they mean.
+fn newest_for_host(
+    catalog: &PackCatalog,
+    active_version: &str,
+) -> Result<Option<PackRelease>, String> {
+    let host = host_platform();
+    let mut candidates: Vec<&PackRelease> = catalog
+        .packs
+        .iter()
+        .filter(|release| release.platform == host)
+        .collect();
+    candidates.sort_by_key(|release| version_key(&release.app_version));
+    let Some(best) = candidates.last() else {
+        return Err(format!("清单里没有适用于 {host} 的运行时包"));
+    };
+    if version_key(&best.app_version) <= version_key(active_version) {
+        log(&format!(
+            "active pack {active_version} is already the newest for {host}"
+        ));
+        return Ok(None);
+    }
+    Ok(Some((*best).clone()))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledPack {
     pub pack_id: String,
@@ -212,29 +239,27 @@ impl PackInstaller {
     /// what is active. Returns `None` when already up to date.
     pub fn update_from_catalog(&self, source: &str) -> Result<Option<InstalledPack>, String> {
         let catalog = self.catalog(source)?;
-        let host = host_platform();
-        let active_version = self
-            .active()
-            .map(|pack| pack.manifest.app_version)
-            .unwrap_or_default();
-        let mut candidates: Vec<&PackRelease> = catalog
-            .packs
-            .iter()
-            .filter(|release| release.platform == host)
-            .collect();
-        candidates.sort_by_key(|release| version_key(&release.app_version));
-        let Some(best) = candidates.last() else {
-            return Err(format!("清单里没有适用于 {host} 的运行时包"));
-        };
-        if version_key(&best.app_version) <= version_key(&active_version) {
-            log(&format!(
-                "active pack {active_version} is already the newest for {host}"
-            ));
+        let Some(best) = newest_for_host(&catalog, self.active_version().as_str())? else {
             return Ok(None);
-        }
+        };
         let url = resolve_relative(source, &best.url);
         let pack = self.install_from_url(&url, &best.sha256)?;
         Ok(Some(pack))
+    }
+
+    /// The catalog entry a user would be offered, without downloading anything.
+    ///
+    /// "Check for updates" has to be able to answer before it acts, and the
+    /// headless `--check-updates` gate must never install.
+    pub fn outdated_from_catalog(&self, source: &str) -> Result<Option<PackRelease>, String> {
+        let catalog = self.catalog(source)?;
+        newest_for_host(&catalog, self.active_version().as_str())
+    }
+
+    fn active_version(&self) -> String {
+        self.active()
+            .map(|pack| pack.manifest.app_version)
+            .unwrap_or_default()
     }
 
     /// Install an archive that is already on disk (the "fat installer" path).

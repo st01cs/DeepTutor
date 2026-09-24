@@ -5,6 +5,10 @@ import { retainedKnowledgeBases } from "@/lib/resource-reuse";
 import { knowledgeBaseRef } from "@/lib/knowledge-helpers";
 import { scopedUrl } from "@/lib/workspace-scope";
 import { WATCHING_HOME, watchingRoute } from "@/lib/learning-routes";
+import {
+  DESKTOP_ATTACH_EVENT,
+  type DesktopAttachDetail,
+} from "@/lib/desktop-shell";
 
 import {
   WatchingSessionBridge,
@@ -1833,6 +1837,29 @@ export default function ChatWorkspace({
     },
     [fileToAttachment, filterAndReportFiles],
   );
+
+  // The desktop shell hands files over as `File` objects: a PDF dropped on the
+  // Dock icon, a file association, or a `deeptutor://` link. The shell read the
+  // bytes (the webview never sees a real path), and this listener feeds them
+  // into the same path as a drag-and-drop. Acknowledging synchronously matters —
+  // the bridge keeps the batch queued until some composer takes it, so a
+  // hand-off that arrives before this component mounts is not lost.
+  useEffect(() => {
+    const onDesktopFiles = (event: Event) => {
+      const detail = (event as CustomEvent<DesktopAttachDetail>).detail;
+      if (!detail?.files?.length) return;
+      detail.acknowledged = true;
+      void handleAddFiles(detail.files);
+    };
+    const announceReady = () => {
+      window.dispatchEvent(new Event("deeptutor:desktop-attach-ready"));
+    };
+    window.addEventListener(DESKTOP_ATTACH_EVENT, onDesktopFiles);
+    announceReady();
+    return () => {
+      window.removeEventListener(DESKTOP_ATTACH_EVENT, onDesktopFiles);
+    };
+  }, [handleAddFiles]);
 
   // Connected subagents are stored as ``type: subagent`` KBs. Derive the
   // selected one before the send callback so the callback can depend on the

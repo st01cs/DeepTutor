@@ -22,6 +22,10 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
+# Phase 3 native integration: OS notifications (round finished) and the
+# `deeptutor://` URL scheme + file associations registered from tauri.conf.json.
+tauri-plugin-notification = "2"
+tauri-plugin-deep-link = "2"
 # Runtime pack handling: tar.gz extraction, digests, downloads.
 flate2 = "1"
 sha2 = "0.10"

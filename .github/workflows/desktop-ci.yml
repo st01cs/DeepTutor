@@ -103,3 +103,62 @@ jobs:
           assert payload['logs_dir'].endswith('desktop/logs'), payload
           print('self-check ok')
           "
+
+      # Phase 3: the first-run wizard, its data-directory pointer and the
+      # read-only update check are all reachable without a window, so a runner
+      # can gate them here. `--check-updates` must never install anything.
+      - name: Headless smoke (first run + settings + update check)
+        working-directory: desktop
+        shell: bash
+        env:
+          DEEPTUTOR_HOME: ${{ runner.temp }}/deeptutor-phase3
+        run: |
+          set -euo pipefail
+          ./target/debug/deeptutor-desktop --first-run-status > first-run.json
+          ./target/debug/deeptutor-desktop --complete-first-run \
+            --locale en --data-dir "$DEEPTUTOR_HOME/data" > first-run-done.json
+          ./target/debug/deeptutor-desktop --pack-status > packs.json
+          python3 -c "
+          import json, os, pathlib, sys
+          first = json.load(open('first-run.json'))
+          assert first['first_run']['completed'] is False, first
+          assert first['first_run']['can_change_data_dir'] is True, first
+
+          done = json.load(open('first-run-done.json'))
+          assert done['restart_required'] is True, done
+          assert done['settings']['first_run_completed'] is True, done
+          # The answers must travel with the pointer, or the wizard reappears.
+          carried = json.loads(pathlib.Path(os.environ['DEEPTUTOR_HOME'], 'data', 'desktop', 'shell.json').read_text())
+          assert carried['first_run_completed'] is True, carried
+          assert carried['locale'] == 'en', carried
+
+          # A catalog for *this* runner's platform, offering something newer.
+          packs = json.load(open('packs.json'))
+          assert packs['active_pack'] is None, packs
+          assert packs['installed'] == [], packs
+          catalog = {
+            'schema_version': 1,
+            'packs': [{
+              'pack_id': 'deeptutor-runtime-9.9.9',
+              'app_version': '9.9.9',
+              'platform': packs['platform'],
+              'url': 'deeptutor-runtime-9.9.9.tar.gz',
+              'sha256': '0' * 64,
+              'size': 1024,
+            }],
+          }
+          pathlib.Path('runtime-packs.fixture.json').write_text(json.dumps(catalog))
+          "
+          ./target/debug/deeptutor-desktop --check-updates \
+            --catalog ./runtime-packs.fixture.json > updates.json
+          python3 -c "
+          import json
+          report = json.load(open('updates.json'))
+          runtime = report['runtime']
+          # The check must answer, and must not have installed anything.
+          assert runtime['checked'] is True, report
+          assert runtime['updated'] is False, report
+          assert '9.9.9' in runtime['detail'], report
+          assert report['shell_update']['status'] == 'unconfigured', report
+          print('phase 3 headless smoke ok')
+          "

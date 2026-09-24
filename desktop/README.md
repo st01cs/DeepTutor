@@ -6,7 +6,8 @@ Next.js 服务；外加原生菜单、托盘、单实例、窗口状态与错误
 
 完整方案见 [`../docs-for-user/DESKTOP_TAURI_PLAN.md`](../docs-for-user/DESKTOP_TAURI_PLAN.md)；
 分阶段验证记录见 [`PHASE0_REPORT.md`](PHASE0_REPORT.md)、
-[`PHASE1_REPORT.md`](PHASE1_REPORT.md) 与 [`PHASE2_REPORT.md`](PHASE2_REPORT.md)。
+[`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md) 与
+[`PHASE3_REPORT.md`](PHASE3_REPORT.md)。
 
 ## 结构
 
@@ -15,7 +16,12 @@ Next.js 服务；外加原生菜单、托盘、单实例、窗口状态与错误
 | `Cargo.toml` | workspace 根（一个 lockfile、一个 target 目录） |
 | `src-tauri/src/main.rs` | 进程入口、插件装配、`--self-check` 冒烟模式 |
 | `src-tauri/src/app.rs` | 菜单栏、托盘与它们的动作 |
-| `src-tauri/src/supervisor.rs` | 拉起/守护/重启 Python launcher、就绪握手、退出清理 |
+| `src-tauri/src/window.rs` | 主窗口（代码创建）：外链外开、下载落盘、关闭 Tauri 拖放处理器 |
+| `src-tauri/src/supervisor.rs` | 拉起/守护/重启 Python launcher、就绪握手、首启闸门、退出清理 |
+| `src-tauri/src/settings.rs` | `desktop/shell.json`（偏好）+ `desktop/bootstrap.json`（数据目录指针） |
+| `src-tauri/src/deeplink.rs` | `deeptutor://` / 文件路径 → 路由或文件的分类（含拒绝规则） |
+| `src-tauri/src/handoff.rs` | 深链 / 文件关联 / Dock 拖放的待投递队列 |
+| `src-tauri/src/notify.rs` | 通知目标记账（一次通知只把用户带回一次） |
 | `src-tauri/src/runtime_info.rs` | 读取 launcher 的 `--runtime-info` 状态文件 |
 | `plugins/tauri-plugin-deeptutor/` | 外壳命令（供 UI 调用）+ permission set |
 | `src-tauri/capabilities/` | `main.json`（本窗口）+ `remote-web.json`（本地 UI 的 IPC 授权） |
@@ -78,12 +84,24 @@ cargo build --locked
 # 冒烟：解析运行时目录并打印，不开窗口、不起 launcher
 ./target/debug/deeptutor-desktop --self-check
 
+# Phase 3 无头流：首启状态 / 代答向导 / 偏好 / 只读更新检查
+./target/debug/deeptutor-desktop --first-run-status
+./target/debug/deeptutor-desktop --complete-first-run --locale zh-CN \
+    [--data-dir DIR] [--no-close-to-tray] [--no-notifications]
+./target/debug/deeptutor-desktop --shell-settings
+./target/debug/deeptutor-desktop --check-updates [--catalog <url|path>]
+
 # 真正跑起来（Phase 1 直接指向源码 checkout）
 export DEEPTUTOR_HOME="$HOME/Library/Application Support/DeepTutor"
 export DEEPTUTOR_DESKTOP_WORKDIR="/path/to/DeepTutor"
 export DEEPTUTOR_DESKTOP_PYTHON="/path/to/DeepTutor/.venv/bin/python"
 ./target/debug/deeptutor-desktop
 ```
+
+`--check-updates` 只报告"有没有新版本"，**不下载、不安装、不重启服务**；要真的装用
+`--update-pack --catalog …`。第一次启动会先出现向导（语言、数据目录、关窗行为、通知），
+答案落在 `<home>/desktop/shell.json`；选了别的数据目录时，指针写在**平台默认位置**的
+`desktop/bootstrap.json` 里，重启后生效。
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
@@ -139,6 +157,21 @@ python -m deeptutor_cli.main start \
   子进程，绝不留下半启动的 backend/frontend。
 - **崩溃自愈**：launcher 异常退出时按 2s/4s/8s 退避自动重启，最多 3 次；手动重启不会被
   计成崩溃（generation 先退休旧线程再杀进程）。
+
+## 已实现的桌面能力（Phase 3）
+
+- **关窗策略**：默认关闭窗口=隐藏到托盘（服务与长任务继续跑），可在菜单栏勾选项或
+  `/settings/desktop` 改成"关窗即退出"。窗口只隐藏不销毁，否则托盘无法把它叫回来。
+- **系统通知**：回合在**后台**完成时才发（标题=会话名，正文=回答开头，目标=`/chat/<id>`）。
+  点击通知/Dock 唤醒后由外壳投递目标，一次通知只投递一次。
+- **深链与文件关联**：`deeptutor://` 方案 + PDF/EPUB/MD 文件关联（需打包版才注册）；
+  拖到 Dock 图标、`open -a`、"打开方式"共用一条 hand-off 队列，冷启动时也不会丢。
+- **原生文件**：`pick_files` / `pick_folder` 原生对话框；文件 hand-off 由外壳读字节交给
+  前端现有的上传链路；导出固定落 `~/Downloads`（重名自动加序号），可"在文件夹中显示"。
+- **首启向导**：语言、数据目录、关窗行为、通知、模型/密钥交接，跑在 splash（app origin）。
+- **设置页**：`/settings/desktop` 在桌面外壳里是真实开关，在浏览器里降级为说明页。
+- **只读更新检查**：菜单/托盘/设置页的"检查更新"读运行时包清单并报告可用版本；外壳自更新
+  通道未配置时会明说，而不是假装"已是最新"。
 
 ## 版本
 
