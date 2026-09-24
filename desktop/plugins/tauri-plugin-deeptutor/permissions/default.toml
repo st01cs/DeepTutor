@@ -1,0 +1,6 @@
+[default]
+description = """
+Commands the DeepTutor UI needs from the desktop shell: read the local service
+status and restart it. Granted to the loopback origin the UI is served from.
+"""
+permissions = ["allow-desktop-status", "allow-restart-service"]

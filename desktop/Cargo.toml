@@ -1,0 +1,7 @@
+# Workspace root for the desktop shell.
+#
+# A virtual manifest keeps the shell and its Tauri plugin on one lockfile and
+# one target directory, so `cargo build` from here builds both.
+[workspace]
+resolver = "2"
+members = ["src-tauri", "plugins/tauri-plugin-deeptutor"]

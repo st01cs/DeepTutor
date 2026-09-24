@@ -3,5 +3,5 @@
   "identifier": "main-window",
   "description": "Core capability for the DeepTutor desktop window (splash + local UI).",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "deeptutor:default"]
 }

@@ -1,0 +1,18 @@
+[package]
+name = "tauri-plugin-deeptutor"
+# Kept in step with deeptutor/__version__.py by desktop/scripts/sync_version.py
+# (Phase 2); until then bump by hand together with src-tauri.
+version = "1.6.10"
+edition = "2021"
+rust-version = "1.77"
+description = "Shell-side commands the DeepTutor UI is allowed to call"
+license = "Apache-2.0"
+links = "tauri-plugin-deeptutor"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

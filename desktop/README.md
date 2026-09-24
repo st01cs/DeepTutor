@@ -1,46 +1,68 @@
-# DeepTutor Desktop（Phase 0 骨架）
+# DeepTutor Desktop（Tauri v2）
 
-Tauri v2 外壳，负责三件事：把 Python launcher 拉起来、等它的就绪握手、把窗口交给本地
-Next.js 服务。业务逻辑（端口、设置、前端构建、更新交接）全部留在
-`deeptutor/runtime/launcher.py`，所以 Web 与 CLI 模式不受影响。
+桌面外壳负责三件事：把 Python launcher 拉起来并守护它、等它的就绪握手、把窗口交给本地
+Next.js 服务；外加原生菜单、托盘、单实例、窗口状态与错误弹窗。业务逻辑（端口、设置、
+前端构建、更新交接）全部留在 `deeptutor/runtime/launcher.py`，所以 Web 与 CLI 模式不受影响。
 
-完整方案见 [`../docs-for-user/DESKTOP_TAURI_PLAN.md`](../docs-for-user/DESKTOP_TAURI_PLAN.md)，
-当前进展与待验证项见 [`PHASE0_REPORT.md`](PHASE0_REPORT.md)。
+完整方案见 [`../docs-for-user/DESKTOP_TAURI_PLAN.md`](../docs-for-user/DESKTOP_TAURI_PLAN.md)；
+分阶段验证记录见 [`PHASE0_REPORT.md`](PHASE0_REPORT.md) 与 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)。
 
-## 目录
+## 结构
 
 | 路径 | 作用 |
 | --- | --- |
-| `src-tauri/src/main.rs` | 窗口 + 应用生命周期 + `desktop_probe` 自检命令 |
-| `src-tauri/src/supervisor.rs` | 拉起/守护 Python launcher、就绪轮询、退出清理 |
+| `Cargo.toml` | workspace 根（一个 lockfile、一个 target 目录） |
+| `src-tauri/src/main.rs` | 进程入口、插件装配、`--self-check` 冒烟模式 |
+| `src-tauri/src/app.rs` | 菜单栏、托盘与它们的动作 |
+| `src-tauri/src/supervisor.rs` | 拉起/守护/重启 Python launcher、就绪握手、退出清理 |
 | `src-tauri/src/runtime_info.rs` | 读取 launcher 的 `--runtime-info` 状态文件 |
+| `plugins/tauri-plugin-deeptutor/` | 外壳命令（供 UI 调用）+ permission set |
 | `src-tauri/capabilities/` | `main.json`（本窗口）+ `remote-web.json`（本地 UI 的 IPC 授权） |
 | `web/` | splash 页面（内嵌，不需要 Node 构建） |
-| `pack/`、`scripts/` | Phase 2 的运行时包与版本同步（尚未创建） |
+| `scripts/phase0_*.sh` | 不依赖 Tauri 的握手 / 孤儿守卫验证脚本 |
 
-## 运行（Phase 0）
+## 为什么外壳命令是"插件"
 
-前置：Rust 工具链、Python 依赖、`web/node_modules`（`deeptutor start` 会自动 `npm ci` 与
-生产构建，首次较慢）。
+UI 由 loopback 上的 Next 服务提供，相对 Tauri 属于**远程源**。Phase 0 实测：
 
-```bash
-export DEEPTUTOR_HOME="$HOME/Library/Application Support/DeepTutor"
-export DEEPTUTOR_DESKTOP_WORKDIR="$PWD"
-export DEEPTUTOR_DESKTOP_PYTHON="$PWD/.venv/bin/python"
-
-cd desktop/src-tauri
-cargo tauri dev            # 或：npx --yes @tauri-apps/cli@^2 dev
+```
+core-app-ok=1.6.10 ; app-cmd-error=desktop_probe not allowed. Plugin not found
 ```
 
-可用环境变量：
+- core / 插件命令可以从 loopback 页面调用（`http://127.0.0.1:*` 通配授权有效）；
+- **应用自定义命令（`generate_handler!`）不带 ACL 条目，远程源无法调用**。
+
+所以 `plugin:deeptutor|desktop_status`、`plugin:deeptutor|restart_service` 都在
+`plugins/tauri-plugin-deeptutor` 里，并在 capability 中授予 `deeptutor:default`。
+需要被 UI 调用的新能力，继续往这个插件里加，不要再加应用命令。
+
+## 构建与运行
+
+```bash
+# 只检查外壳本身
+cd desktop
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo build --locked
+
+# 冒烟：解析运行时目录并打印，不开窗口、不起 launcher
+./target/debug/deeptutor-desktop --self-check
+
+# 真正跑起来（Phase 1 直接指向源码 checkout）
+export DEEPTUTOR_HOME="$HOME/Library/Application Support/DeepTutor"
+export DEEPTUTOR_DESKTOP_WORKDIR="/path/to/DeepTutor"
+export DEEPTUTOR_DESKTOP_PYTHON="/path/to/DeepTutor/.venv/bin/python"
+./target/debug/deeptutor-desktop
+```
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `DEEPTUTOR_HOME` | macOS `~/Library/Application Support/DeepTutor` | 运行时目录（`data/`、`desktop/`） |
-| `DEEPTUTOR_DESKTOP_WORKDIR` | 同 `DEEPTUTOR_HOME` | launcher 的工作目录；Phase 0 指向仓库根 |
+| `DEEPTUTOR_DESKTOP_WORKDIR` | 同 `DEEPTUTOR_HOME` | launcher 的工作目录；Phase 1 指向仓库根 |
 | `DEEPTUTOR_DESKTOP_PYTHON` | `<home>/.venv/bin/python` → `python3` | launcher 解释器 |
 
-外壳传给 launcher 的参数（全部是可选加法）：
+外壳传给 launcher 的参数（全部是 Phase 0 落地的可选加法）：
 
 ```bash
 python -m deeptutor_cli.main start \
@@ -49,11 +71,29 @@ python -m deeptutor_cli.main start \
   --parent-pid <shell pid>
 ```
 
-`DEEPTUTOR_DESKTOP_SHELL=1` 由外壳设置，作用是让 `detect_installation()` 返回
-`desktop` 模式，从而禁用 pip 自更新（签名过的应用包不能自我改写）。
+`DEEPTUTOR_DESKTOP_SHELL=1` 由外壳设置，让 `detect_installation()` 返回 `desktop` 模式从而
+禁用 pip 自更新（签名过的应用包不能自我改写）。
+
+## 已实现的桌面能力（Phase 1）
+
+- **菜单栏**：DeepTutor / 编辑（⌘C/⌘V 在 WebView 内生效）/ 视图（重新加载、全屏、调试版
+  开发者工具）/ 窗口 / 帮助；含"设置 ⌘,、重新启动本地服务、打开日志目录、使用文档"。
+- **托盘**：显示主窗口、重新启动本地服务、打开日志目录、退出；左键点击唤回窗口。
+- **单实例**：第二次启动只聚焦已有窗口。
+- **窗口状态**：尺寸/位置由 `tauri-plugin-window-state` 记忆。
+- **失败可见**：启动失败写 `desktop/logs/shell.log` + splash 红字 + 原生错误弹窗，并先收摊
+  子进程，绝不留下半启动的 backend/frontend。
+- **崩溃自愈**：launcher 异常退出时按 2s/4s/8s 退避自动重启，最多 3 次；手动重启不会被
+  计成崩溃（generation 先退休旧线程再杀进程）。
 
 ## 版本
 
-`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json` 的 `version` 必须与
-`deeptutor/__version__.py` 一致。Phase 2 的 `desktop/scripts/sync_version.py` 会把它变成
-自动同步 + 发布守卫测试，在此之前请手工同步。
+`src-tauri/Cargo.toml`、`plugins/tauri-plugin-deeptutor/Cargo.toml` 与
+`src-tauri/tauri.conf.json` 的 `version` 必须与 `deeptutor/__version__.py` 一致。
+Phase 2 的 `desktop/scripts/sync_version.py` 会把它变成自动同步 + 发布守卫，在此之前手工同步。
+
+## CI
+
+`.github/workflows/desktop-ci.yml` 在 `desktop/**` 变更时跑 fmt / clippy / 单测 / 构建 /
+`--self-check` 冒烟（macOS arm64）。Python 侧的桌面契约由
+`tests/runtime/test_desktop_launcher_contract.py` 通过 `tests.yml` 覆盖。

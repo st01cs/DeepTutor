@@ -1,0 +1,105 @@
+name: Desktop Shell CI
+
+# The desktop shell is a separate Rust workspace under desktop/. It only needs
+# to build when its own tree (or this workflow) changes. The Python-side
+# desktop contract (launcher flags, install mode) lives in tests/runtime and is
+# covered by tests.yml instead.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-ci.yml"
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell:
+    name: Shell (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS arm64 is the Phase 1 target. Windows joins the matrix in Phase 2
+        # together with the runtime pack, Linux in v1.x — see
+        # docs-for-user/DESKTOP_TAURI_PLAN.md.
+        os: [macos-14]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal \
+            --component rustfmt,clippy --no-self-update
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/target
+          key: desktop-cargo-${{ runner.os }}-${{ hashFiles('desktop/Cargo.lock') }}
+          restore-keys: |
+            desktop-cargo-${{ runner.os }}-
+
+      - name: Format
+        working-directory: desktop
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        working-directory: desktop
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Unit tests
+        working-directory: desktop
+        run: cargo test --locked
+
+      - name: Build shell
+        working-directory: desktop
+        run: cargo build --locked
+
+      # Opening a real window on a headless runner is not something to depend
+      # on, so the smoke test covers what a runner can check: the shell starts,
+      # resolves its runtime home and reports where it would put state and logs.
+      - name: Headless smoke (config resolution)
+        working-directory: desktop
+        env:
+          DEEPTUTOR_HOME: ${{ runner.temp }}/deeptutor-home
+          DEEPTUTOR_DESKTOP_WORKDIR: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          ./target/debug/deeptutor-desktop --self-check > self-check.json
+          cat self-check.json
+          python3 -c "
+          import json, os, sys
+          payload = json.load(open('self-check.json'))
+          assert payload['shell'] == 'deeptutor-desktop', payload
+          assert payload['home'] == os.environ['DEEPTUTOR_HOME'], payload
+          assert payload['workdir'] == os.environ['DEEPTUTOR_DESKTOP_WORKDIR'], payload
+          assert payload['state_path'].endswith('desktop/runtime.json'), payload
+          assert payload['logs_dir'].endswith('desktop/logs'), payload
+          print('self-check ok')
+          "

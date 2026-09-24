@@ -1,50 +1,78 @@
-//! DeepTutor desktop shell — Phase 0 skeleton.
+//! DeepTutor desktop shell.
 //!
-//! Phase 0 goal: prove that a Tauri window can boot the existing Python
-//! launcher, wait for its `--runtime-info` handshake, and hand the window over
-//! to the loopback Next.js server — without touching the Web or CLI path.
+//! Phase 1 shape: a supervisor thread owns the Python launcher, the window is
+//! handed over to the loopback UI once the launcher reports ready, and every
+//! command the UI may call lives in `tauri-plugin-deeptutor` because Tauri's
+//! ACL only grants *plugin* commands to a remote origin (Phase 0 finding).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app;
 mod runtime_info;
 mod supervisor;
 
 use std::sync::Arc;
 
 use tauri::{Manager, RunEvent};
+use tauri_plugin_deeptutor::DesktopBackend;
 
 use supervisor::{ShellConfig, Supervisor};
 
-/// Remote-IPC self-test: proves the locally served UI can call the shell.
-/// The caller's URL is logged so the splash (app origin) and the real UI
-/// (loopback origin) are distinguishable in `desktop/logs/shell.log`.
-#[tauri::command]
-fn desktop_probe(
-    window: tauri::WebviewWindow,
-    supervisor: tauri::State<'_, Arc<Supervisor>>,
-) -> serde_json::Value {
-    let origin = window
-        .url()
-        .map(|url| url.to_string())
-        .unwrap_or_else(|_| "<unknown>".to_string());
-    supervisor.record_probe(&origin);
-    supervisor.probe()
-}
-
 fn main() {
+    // Headless smoke test for CI: resolve the shell configuration and print it
+    // without starting the launcher or opening a window, so it also works on a
+    // runner that has no display.
+    if std::env::args().any(|arg| arg == "--self-check") {
+        let config = ShellConfig::resolve();
+        let payload = serde_json::json!({
+            "shell": "deeptutor-desktop",
+            "mode": "self-check",
+            "home": config.home,
+            "workdir": config.workdir,
+            "python": config.python,
+            "state_path": config.state_path,
+            "logs_dir": config.logs_dir,
+            "python_exists": config.python.exists(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+        );
+        return;
+    }
+
     let config = ShellConfig::resolve();
+    let supervisor = Supervisor::new_shared(config);
+    let backend: Arc<dyn DesktopBackend> = supervisor.clone();
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![desktop_probe])
-        .setup(move |app| {
-            let supervisor = Arc::new(Supervisor::new(config));
-            app.manage(Arc::clone(&supervisor));
-            let window = app
-                .get_webview_window("main")
-                .ok_or_else(|| "主窗口未在 tauri.conf.json 中声明".to_string())?;
-            supervisor.attach_window(window);
-            supervisor.start();
-            Ok(())
+        // Single instance is registered first: it decides whether this process
+        // is the one that owns the app or just focuses the existing window.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            app::reveal(app);
+        }))
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deeptutor::init(backend))
+        .setup({
+            let supervisor = Arc::clone(&supervisor);
+            move |app| {
+                app.manage(Arc::clone(&supervisor));
+                let handle = app.handle().clone();
+                supervisor.attach_app(handle.clone());
+                let window = app
+                    .get_webview_window("main")
+                    .ok_or_else(|| "主窗口未在 tauri.conf.json 中声明".to_string())?;
+                supervisor.attach_window(window);
+                app::install_menu(&handle)?;
+                app::install_tray(&handle)?;
+                app.on_menu_event(|handle, event| {
+                    app::on_menu_event(handle, event.id().as_ref());
+                });
+                supervisor.start();
+                Ok(())
+            }
         })
         .build(tauri::generate_context!())
         .expect("failed to build the DeepTutor desktop shell")

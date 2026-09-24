@@ -417,14 +417,16 @@ v1 平台矩阵已定为 **macOS(arm64 / x64) + Windows(x64)**（已拍板）。
 
 ### Phase 1 — 桌面外壳 MVP（2–3 周，1–2 人）
 
-- [ ] **`tauri-plugin-deeptutor`（先行项）**：把外壳自有命令（桌面状态、重启服务、运行时包信息）做成带 permission set 的 Tauri 插件——Phase 0 实测应用命令无法授权给远程源（§5.4）。
-- [ ] `supervisor.rs`：spawn / 握手 / 崩溃重启（指数退避，最多 3 次）/ 优雅退出（SIGTERM → 5s → KILL 进程组）/ 父进程死亡自清理。
-- [ ] splash 窗口 + 原生错误对话框（端口占用、运行时缺失、启动超时、反复崩溃）。
-- [ ] 原生菜单（App/Edit/View/Window/Help，⌘, → 设置页）、窗口状态记忆、文件日志 + "打开日志目录"。
-- [ ] 单实例 + 二次启动聚焦。
-- [ ] Launcher 三个新参数的实现 + 单元测试（含"不带参数行为不变"的回归断言）。
-- [ ] `detect_installation()` 增加 `desktop` 模式，设置页更新面板展示正确文案。
-- [ ] CI 增加 `desktop-ci.yml`：PR 上构建 macOS arm64 调试包，跑外壳单测 + 启动冒烟（Windows 调试包在 Phase 2 并入矩阵）。
+- [x] **`tauri-plugin-deeptutor`（先行项）**：外壳命令（`desktop_status` / `restart_service`）做成带 permission set 的插件，capability 授予 `deeptutor:default`；运行时已验证 loopback 页面可直接调用。
+- [x] `supervisor.rs`：spawn / 握手 / 崩溃重启（2s/4s/8s 退避，最多 3 次）/ 优雅退出（SIGTERM → 5s → KILL 进程组）/ 父进程死亡自清理；`generation` 机制保证手动重启不被误判成崩溃。
+- [x] splash 窗口 + 原生错误对话框（失败时先收摊子进程，再写日志、splash 红字与系统弹窗）。
+- [x] 原生菜单（DeepTutor/编辑/视图/窗口/帮助，⌘, → 设置页，⌘R 重载）、窗口状态记忆、文件日志 + "打开日志目录"；另附托盘（显示/重启/日志/退出 + 左键唤回）。
+- [x] 单实例 + 二次启动聚焦。
+- [x] Launcher 三个新参数的实现 + 单元测试（含"不带参数行为不变"的回归断言）——Phase 0 提前完成。
+- [x] `detect_installation()` 增加 `desktop` 模式：`automatic_update=False`，设置页走既有 "Managed by your installation" 分支展示原因与命令（与 docker/source 同路径；文案本地化留待 Phase 3）。
+- [x] CI 增加 `desktop-ci.yml`：`desktop/**` 变更时跑 fmt / clippy -D warnings / 单测 / 构建 / `--self-check` 冒烟（Windows 调试包在 Phase 2 并入矩阵）。
+
+> 进展与运行时证据见 [`desktop/PHASE1_REPORT.md`](../../desktop/PHASE1_REPORT.md)。
 
 **退出标准**：安装 → 点开 → 5 秒内出现窗口；⌘Q 后无残留 uvicorn/server.js 进程；异常退出能被外壳兜住并给出可读错误。
 

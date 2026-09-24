@@ -103,7 +103,7 @@
           return;
         }
         try {
-          const payload = await bridge.invoke("desktop_probe");
+          const payload = await bridge.invoke("plugin:deeptutor|desktop_status");
           probeEl.textContent = JSON.stringify(payload, null, 2);
         } catch (error) {
           probeEl.textContent = "invoke failed: " + error;

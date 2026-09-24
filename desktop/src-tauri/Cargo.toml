@@ -12,9 +12,16 @@ license = "Apache-2.0"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tauri-plugin-deeptutor = { path = "../plugins/tauri-plugin-deeptutor" }
+# Native integration. Rust-side use needs no capability entry; a capability is
+# only required for calls that come from JavaScript.
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
 
 [target.'cfg(unix)'.dependencies]
 # Process-group signalling for the orphan guard: the launcher owns two children
