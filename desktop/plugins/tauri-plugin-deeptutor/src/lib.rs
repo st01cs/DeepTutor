@@ -52,6 +52,9 @@ pub trait DesktopBackend: Send + Sync + 'static {
     fn settings(&self) -> ShellSettingsSnapshot;
     /// Apply a partial update and return the new snapshot.
     fn update_settings(&self, patch: SettingsPatch) -> Result<ShellSettingsSnapshot, String>;
+    /// The UI reports its first paint with its own elapsed time, so the shell
+    /// can log where the launch time actually went.
+    fn note_ui_ready(&self, elapsed_ms: u64);
     /// Post a system notification for a finished round.
     fn notify(&self, request: NotificationRequest) -> Result<NotificationOutcome, String>;
     /// Claim the session a notification pointed at, if the user has come back.
@@ -91,6 +94,9 @@ pub struct DesktopStatus {
     pub logs_dir: String,
     /// How many system notifications went out this session.
     pub notifications_posted: u64,
+    /// Where the launch time went, once the UI has painted (see `startup.rs`
+    /// in the shell). `None` until then.
+    pub startup: Option<StartupTimings>,
     /// Window geometry, so a support log can show whether state restoration
     /// actually took effect (see `window.rs`: Tauri 2.11 never fires the
     /// window-state plugin's `on_window_ready`, so the shell restores itself).
@@ -109,6 +115,24 @@ pub struct WindowGeometry {
     pub maximized: bool,
     pub fullscreen: bool,
     pub visible: bool,
+}
+
+/// Launch timings, measured in the shell so they survive a slow webview.
+///
+/// The interesting question for a desktop app is "how long until the user sees
+/// the real UI", which spans three things the shell owns: spending up the
+/// launcher, the launcher reporting ready, and the loopback page painting.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct StartupTimings {
+    /// Shell start → launcher spawned.
+    pub spawn_ms: u64,
+    /// Shell start → launcher reported ready.
+    pub ready_ms: u64,
+    /// Shell start → the UI said it had painted.
+    pub ui_ms: u64,
+    /// Ready → the UI said it had painted, i.e. the part the shell can still
+    /// influence (window creation, navigation, first render).
+    pub ready_to_ui_ms: u64,
 }
 
 /// The subset of the launcher's `--runtime-info` file the UI cares about.
@@ -315,6 +339,18 @@ fn update_shell_settings(
     backend.0.update_settings(patch)
 }
 
+/// The UI's own "I have painted" call.
+///
+/// `elapsed_ms` comes from `performance.now()` in the page, which starts when
+/// the document does; the shell adds the time it spent before handing the window
+/// over, so the two numbers line up on one axis.
+// Explicitly camelCase: the page sends `elapsedMs`, and a rename mismatch here
+// fails silently as a rejected promise while the app keeps working.
+#[tauri::command(rename_all = "camelCase")]
+fn note_ui_ready(elapsed_ms: u64, backend: State<'_, BackendState>) {
+    backend.0.note_ui_ready(elapsed_ms);
+}
+
 #[tauri::command]
 fn notify_round_complete(
     request: NotificationRequest,
@@ -507,6 +543,7 @@ pub fn init<R: Runtime>(backend: Arc<dyn DesktopBackend>) -> TauriPlugin<R> {
             restart_service,
             shell_settings,
             update_shell_settings,
+            note_ui_ready,
             notify_round_complete,
             take_notification_target,
             take_open_request,

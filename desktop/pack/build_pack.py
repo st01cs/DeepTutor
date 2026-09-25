@@ -51,18 +51,31 @@ DEFAULT_PBS_TAG = "20260901"
 DEFAULT_PYTHON_VERSION = "3.12.14"
 DEFAULT_NODE_VERSION = "20.18.0"
 
-SUPPORTED_PLATFORMS = ("macos-aarch64", "macos-x86_64", "windows-x86_64")
+# Linux is a v1.x target (the shell ships macOS + Windows first), but the pack
+# side is platform-agnostic: same CPython tag, same locked wheels, same Node.
+# Keeping the keys here means "add Linux" is a CI matrix entry, not a rewrite.
+SUPPORTED_PLATFORMS = (
+    "macos-aarch64",
+    "macos-x86_64",
+    "windows-x86_64",
+    "linux-x86_64",
+    "linux-aarch64",
+)
 
 PBS_TRIPLES = {
     "macos-aarch64": "aarch64-apple-darwin",
     "macos-x86_64": "x86_64-apple-darwin",
     "windows-x86_64": "x86_64-pc-windows-msvc",
+    "linux-x86_64": "x86_64-unknown-linux-gnu",
+    "linux-aarch64": "aarch64-unknown-linux-gnu",
 }
 
 NODE_ARCHIVES = {
     "macos-aarch64": ("node-v{version}-darwin-arm64.tar.gz", "darwin-arm64", "tar.gz"),
     "macos-x86_64": ("node-v{version}-darwin-x64.tar.gz", "darwin-x64", "tar.gz"),
     "windows-x86_64": ("node-v{version}-win-x64.zip", "win-x64", "zip"),
+    "linux-x86_64": ("node-v{version}-linux-x64.tar.gz", "linux-x64", "tar.gz"),
+    "linux-aarch64": ("node-v{version}-linux-arm64.tar.gz", "linux-arm64", "tar.gz"),
 }
 
 
@@ -73,6 +86,10 @@ def host_platform() -> str:
         return "macos-aarch64" if machine in {"arm64", "aarch64"} else "macos-x86_64"
     if system == "Windows":
         return "windows-x86_64"
+    if system == "Linux":
+        # v1.x target: the shell does not ship for Linux yet, but a pack built
+        # here is usable the moment it does.
+        return "linux-aarch64" if machine in {"aarch64", "arm64"} else "linux-x86_64"
     return f"unsupported-{system.lower()}-{machine}"
 
 
@@ -187,6 +204,34 @@ def build_wheel(stage: Path) -> Path:
     if not wheels:
         raise SystemExit(f"no deeptutor wheel produced in {wheel_dir}")
     return wheels[-1]
+
+
+def wheel_version(wheel: Path) -> str:
+    """The version baked into a wheel name: `deeptutor-1.6.11-py3-none-any.whl`."""
+
+    match = re.match(r"deeptutor-([^-]+)-", wheel.name)
+    if not match:
+        raise SystemExit(f"unexpected wheel name: {wheel.name}")
+    return match.group(1)
+
+
+def assert_wheel_matches_label(wheel: Path, label: str) -> None:
+    """Refuse to publish a pack whose label disagrees with its contents.
+
+    `--app-version` only names the archive; the wheel comes from
+    `deeptutor/__version__.py`. Passing a version that was never written into
+    that file produces a pack that *says* 1.6.11 while running 1.6.10 — a
+    mistake that survives every checksum, because the archive is internally
+    consistent. It only shows up as "the update installed but nothing changed".
+    """
+
+    built = wheel_version(wheel)
+    if built != label:
+        raise SystemExit(
+            f"the wheel is {built} but the pack would be labelled {label}: bump "
+            "deeptutor/__version__.py (the single source of truth) instead of "
+            "passing --app-version, so the archive, the wheel and the release tag agree."
+        )
 
 
 def fetch_python(stage: Path, *, tag: str, version: str, target: str) -> tuple[Path, str]:
@@ -366,6 +411,7 @@ def main() -> int:
     log(f"building pack {pack_id}")
     prepare_web(args.skip_web_build)
     wheel = build_wheel(stage)
+    assert_wheel_matches_label(wheel, version)
     log(f"wheel: {wheel.name}")
     python_dir, triple = fetch_python(
         stage, tag=args.pbs_tag, version=args.python_version, target=args.platform

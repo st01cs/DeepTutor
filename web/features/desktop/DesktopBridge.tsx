@@ -8,6 +8,7 @@ import {
   SHELL_EVENTS,
   fileFromLocalFile,
   isDesktopShell,
+  noteUiReady,
   onShellEvent,
   readLocalFile,
   shellLog,
@@ -121,6 +122,13 @@ export default function DesktopBridge() {
 
   useEffect(() => {
     if (!isDesktopShell()) return;
+    // Startup timing: the shell owns the launcher half of the launch, this page
+    // owns the render half, and `performance.now()` is the only clock they share.
+    void noteUiReady(Math.round(performance.now())).catch((error: unknown) => {
+      // Never let a timing ping fail quietly: silence here once cost an hour of
+      // wondering why a launch line never appeared.
+      void shellLog(`startup ping failed: ${String(error)}`);
+    });
     void shellLog("web ui connected (desktop shell)");
     void drainAll();
 

@@ -11,6 +11,7 @@ native file picker. Granted to the loopback origin the UI is served from.
 - `allow-restart-service`
 - `allow-shell-settings`
 - `allow-update-shell-settings`
+- `allow-note-ui-ready`
 - `allow-notify-round-complete`
 - `allow-take-notification-target`
 - `allow-take-open-request`
@@ -186,6 +187,32 @@ Enables the log_event command without any pre-configured scope.
 <td>
 
 Denies the log_event command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`deeptutor:allow-note-ui-ready`
+
+</td>
+<td>
+
+Enables the note_ui_ready command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`deeptutor:deny-note-ui-ready`
+
+</td>
+<td>
+
+Denies the note_ui_ready command without any pre-configured scope.
 
 </td>
 </tr>

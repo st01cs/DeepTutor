@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-note-ui-ready"
+description = "Enables the note_ui_ready command without any pre-configured scope."
+commands.allow = ["note_ui_ready"]
+
+[[permission]]
+identifier = "deny-note-ui-ready"
+description = "Denies the note_ui_ready command without any pre-configured scope."
+commands.deny = ["note_ui_ready"]

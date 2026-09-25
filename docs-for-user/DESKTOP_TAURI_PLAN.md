@@ -491,10 +491,14 @@ v1 平台矩阵已定为 **macOS(arm64 / x64) + Windows(x64)**（已拍板）。
 
 ### Phase 4 — 优化与平台扩展（可选，2 周）
 
-- [ ] Spike B：运行时包增量更新（只换变更的 wheel / 前端产物），把常见更新从 300MB 降到 10–30MB。
-- [ ] Linux 接入：`deb`/`rpm` 优先，AppImage 标注 WebKitGTK 宿主依赖；加入 CI 矩阵与 `runtime-packs.json` 平台键。
-- [ ] Windows/Linux 体验打磨（任务栏、通知、字体、WebView2 兜底）。
-- [ ] 启动性能：splash 到首屏的耗时埋点与优化。
+- [x] Spike B：运行时包增量更新（只换变更的 wheel / 前端产物）——实测 **2.2MB** 取代 257MB，结果与完整包逐文件一致，基线不匹配自动回退。
+- [~] Linux 接入：打包侧（`linux-x86_64`/`linux-aarch64` 键位 + opt-in CI 作业 + catalog 平台键）已就绪；
+      **deb/rpm/AppImage 外壳与 WebKitGTK 宿主依赖仍未做**，需 Linux runner 验证。
+- [ ] Windows/Linux 体验打磨（任务栏、通知、字体、WebView2 兜底）——留到有对应平台时做。
+- [x] 启动性能埋点：`startup: spawn 1528 ms, ready 4827 ms, first paint 4897 ms (70 ms after ready)`
+      ——首屏不是瓶颈，下一步优化点在解释器探测与后端启动（见报告 §5）。
+
+> 进展与实测证据见 [`desktop/PHASE4_REPORT.md`](../../desktop/PHASE4_REPORT.md)。
 
 ## 8. 测试与 CI
 

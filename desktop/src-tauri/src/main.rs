@@ -15,12 +15,14 @@ mod app;
 mod deeplink;
 mod handoff;
 mod notify;
+mod pack_tree;
 mod runtime_info;
 mod runtime_pack;
 mod settings;
 mod supervisor;
 mod window;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::{Manager, RunEvent, WindowEvent};
@@ -57,6 +59,11 @@ enum Headless {
         source: String,
         sha256: Option<String>,
     },
+    /// Apply an incremental runtime update on top of the active pack.
+    ApplyDelta {
+        source: String,
+        sha256: Option<String>,
+    },
     UpdatePack {
         source: String,
     },
@@ -65,6 +72,12 @@ enum Headless {
     /// Install the newest shell build in place. Used by verification scripts and
     /// by a support "update this machine now" runbook; the GUI asks first.
     InstallShellUpdate,
+    /// Print a pack tree's fingerprint (see `pack_tree::tree_digest`), optionally
+    /// tokenising extra roots that an earlier build directory left behind.
+    PackFingerprint {
+        directory: PathBuf,
+        stale_roots: Vec<String>,
+    },
     RollbackPack,
 }
 
@@ -106,6 +119,18 @@ fn headless_mode(args: &[String]) -> Option<Headless> {
     if flag("--install-shell-update") {
         return Some(Headless::InstallShellUpdate);
     }
+    if let Some(directory) = value("--pack-fingerprint") {
+        let stale_roots = args
+            .iter()
+            .enumerate()
+            .filter(|(_, arg)| arg.as_str() == "--stale-root")
+            .filter_map(|(index, _)| args.get(index + 1).cloned())
+            .collect();
+        return Some(Headless::PackFingerprint {
+            directory: PathBuf::from(directory),
+            stale_roots,
+        });
+    }
     if flag("--pack-status") {
         return Some(Headless::PackStatus);
     }
@@ -119,6 +144,12 @@ fn headless_mode(args: &[String]) -> Option<Headless> {
     }
     if flag("--rollback-pack") {
         return Some(Headless::RollbackPack);
+    }
+    if let Some(source) = value("--apply-delta") {
+        return Some(Headless::ApplyDelta {
+            source,
+            sha256: value("--sha256"),
+        });
     }
     value("--install-pack").map(|source| Headless::InstallPack {
         source,
@@ -184,6 +215,28 @@ fn pack_summary(pack: &InstalledPack) -> serde_json::Value {
 fn run_headless(mode: Headless) -> i32 {
     let config = ShellConfig::resolve();
     match mode {
+        Headless::PackFingerprint {
+            directory,
+            stale_roots,
+        } => match pack_tree::tree_digest(&directory, &stale_roots) {
+            Ok(digest) => {
+                print_json(&serde_json::json!({
+                    "shell": "deeptutor-desktop",
+                    "mode": "pack-fingerprint",
+                    "directory": directory,
+                    "stale_roots": stale_roots,
+                    "sha256": digest.sha256,
+                    "files": digest.files,
+                    "bytes": digest.bytes,
+                }));
+                0
+            }
+            Err(error) => {
+                eprintln!("无法计算指纹: {error}");
+                1
+            }
+        },
+
         Headless::ShellSettings => {
             let supervisor = Supervisor::new_shared(config);
             print_json(
@@ -485,6 +538,35 @@ fn run_headless(mode: Headless) -> i32 {
                 }
                 Err(error) => {
                     eprintln!("回滚失败: {error}");
+                    1
+                }
+            }
+        }
+
+        Headless::ApplyDelta { source, sha256 } => {
+            let installer = PackInstaller::new(&config.home);
+            let result = if source.starts_with("http://") || source.starts_with("https://") {
+                match sha256.as_deref() {
+                    Some(expected) => installer.install_delta_from_url(&source, expected),
+                    None => Err("从 URL 应用增量必须提供 --sha256".to_string()),
+                }
+            } else {
+                installer.install_delta_archive(std::path::Path::new(&source), sha256.as_deref())
+            };
+            match result {
+                Ok(pack) => {
+                    print_json(&serde_json::json!({
+                        "shell": "deeptutor-desktop",
+                        "mode": "apply-delta",
+                        "home": config.home,
+                        "installed": pack_summary(&pack),
+                        "active_pack": installer.state().active_pack,
+                        "previous_pack": installer.state().previous_pack,
+                    }));
+                    0
+                }
+                Err(error) => {
+                    eprintln!("应用增量失败: {error}");
                     1
                 }
             }

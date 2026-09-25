@@ -24,6 +24,10 @@ on:
         description: "Upload artifacts to the GitHub release for this tag"
         type: boolean
         default: false
+      include_linux:
+        description: "Also build the Linux runtime pack (preview: no Linux shell yet)"
+        type: boolean
+        default: false
   release:
     types: [published]
 
@@ -142,7 +146,10 @@ jobs:
 
   catalog:
     name: Assemble runtime-packs.json
-    needs: packs
+    needs: [packs, packs-linux]
+    # `packs-linux` is usually skipped, and a skipped dependency would otherwise
+    # skip the catalog too.
+    if: always() && needs.packs.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -172,6 +179,52 @@ jobs:
           name: runtime-packs
           path: desktop/pack/dist/runtime-packs.json
           if-no-files-found: error
+
+  # Linux is a v1.x target: the *pack* side is platform-agnostic (same CPython
+  # tag, same locked wheels, same Node), so this job exists to prove that and to
+  # have a catalog entry ready. The shell still needs deb/rpm/AppImage bundles
+  # plus WebKitGTK host dependencies, which is why this is opt-in.
+  packs-linux:
+    name: Runtime pack (linux-x86_64, preview)
+    needs: validate
+    if: inputs.include_linux
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install uv
+        run: pip install --quiet uv
+
+      - name: Build the web frontend
+        working-directory: web
+        run: |
+          npm ci --legacy-peer-deps
+          npm run build
+
+      - name: Build the runtime pack
+        run: python3 desktop/pack/build_pack.py --skip-web-build --platform linux-x86_64
+
+      - name: Upload the pack and its catalog fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-pack-linux-x86_64
+          path: |
+            desktop/pack/dist/*.tar.gz
+            desktop/pack/dist/*.tar.gz.sha256
+            desktop/pack/dist/*.catalog.json
+          if-no-files-found: error
+          retention-days: 14
 
   shell:
     name: Shell bundle (${{ matrix.manifest_platform }})

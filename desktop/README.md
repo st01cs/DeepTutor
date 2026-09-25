@@ -7,7 +7,7 @@ Next.js 服务；外加原生菜单、托盘、单实例、窗口状态与错误
 完整方案见 [`../docs-for-user/DESKTOP_TAURI_PLAN.md`](../docs-for-user/DESKTOP_TAURI_PLAN.md)；
 分阶段验证记录见 [`PHASE0_REPORT.md`](PHASE0_REPORT.md)、
 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md) 与
-[`PHASE3_REPORT.md`](PHASE3_REPORT.md)。
+[`PHASE3_REPORT.md`](PHASE3_REPORT.md)、[`PHASE4_REPORT.md`](PHASE4_REPORT.md)。
 
 ## 结构
 
@@ -30,6 +30,7 @@ Next.js 服务；外加原生菜单、托盘、单实例、窗口状态与错误
 | `pack/` | 运行时包：`runtime.lock.txt`、`build_pack.py`、`assemble_catalog.py` |
 | `scripts/sync_version.py` | 版本同步与 `--check` 守卫 |
 | `scripts/assemble_updater_manifest.py` | 逐平台合并 Tauri 的 `latest.json`（含签名结构校验） |
+| `pack/build_delta.py` | 两个 pack 树求差 → 增量包 + 目录片段（Phase 4） |
 | `RELEASE_SIGNING.md` | 发布密钥清单、缺失时的降级行为、本地演练与自检命令 |
 
 ## 运行时包（Phase 2）
@@ -92,6 +93,10 @@ cargo build --locked
     [--data-dir DIR] [--no-close-to-tray] [--no-notifications]
 ./target/debug/deeptutor-desktop --shell-settings
 ./target/debug/deeptutor-desktop --check-updates [--catalog <url|path>]
+
+# Phase 4：增量运行时更新（先由 build_delta.py 产出增量包）
+./target/debug/deeptutor-desktop --apply-delta <file|url> [--sha256 …]
+./target/debug/deeptutor-desktop --pack-fingerprint <dir> [--stale-root <path>]…
 
 # 外壳更新通道（Phase 2 收尾）：下载验签 / 真装
 ./target/debug/deeptutor-desktop --verify-shell-update
@@ -189,6 +194,34 @@ python -m deeptutor_cli.main start \
 检查一次就会同时回答两条通道（`check_updates` / `--check-updates`）：外壳更新的签名在下载时
 校验，验签失败绝不进入安装步骤。发布密钥、"缺密钥会怎样"、以及本地演练命令见
 [`RELEASE_SIGNING.md`](RELEASE_SIGNING.md)。
+
+## 增量运行时更新（Phase 4）
+
+完整包 257MB 里绝大多数内容（CPython、Node、几乎全部 wheel）在两个版本之间是逐字节相同的，
+所以"更新"只需要传变掉的那一点：
+
+```bash
+# 1. 对着上一版的 staged 树生成增量（CI 里对着上一个 release 的包做同样的事）
+python3 desktop/pack/build_delta.py \
+    --base   desktop/pack/dist/stage-1.6.10-macos-aarch64 \
+    --target desktop/pack/dist/stage-1.6.11-macos-aarch64
+# → 1.6.11-macos-aarch64.delta.tar.gz（实测 2.2MB）+ .delta.catalog.json
+
+# 2. assemble_catalog.py 会把 delta 挂到对应 pack 条目上（URL/sha256/size）
+
+# 3. 外壳侧：目录里基线匹配时自动走增量，否则回退完整包
+deeptutor-desktop --update-pack --catalog <url|path>
+# 也可以直接应用一个增量文件：
+deeptutor-desktop --apply-delta <file> --sha256 <digest>
+```
+
+安全边界（详见 [`PHASE4_REPORT.md`](PHASE4_REPORT.md)）：
+
+- 增量只对**一个精确基线**有效（pack_id + 文件数 + 归一化树指纹，跨"安装时被 rehydrate 改写过的
+  路径"也能对上）；基线不对 → 拒绝 → 自动回退完整包；
+- 每个增量文件在放入前按 **原始字节** 校验 sha256；应用后再算一次目标指纹；
+- 基线用硬链接克隆，失败只影响暂存目录，活动包与 `previous_pack` 都不动；
+- 目录里同时保留完整包：任何"增量不可用"的情况都不会让用户卡住。
 
 ## 版本
 

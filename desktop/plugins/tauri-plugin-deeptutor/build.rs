@@ -11,6 +11,7 @@ const COMMANDS: &[&str] = &[
     // Phase 3: preferences, notifications, handoffs and native file access.
     "shell_settings",
     "update_shell_settings",
+    "note_ui_ready",
     "notify_round_complete",
     "take_notification_target",
     "take_open_request",

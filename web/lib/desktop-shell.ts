@@ -26,6 +26,13 @@ export interface DesktopShellStatus {
   pack: string | null;
   logs_dir: string;
   notifications_posted: number;
+  /** Launch timings, once this page has reported its first paint. */
+  startup: {
+    spawn_ms: number;
+    ready_ms: number;
+    ui_ms: number;
+    ready_to_ui_ms: number;
+  } | null;
   /** Main-window geometry; `null` before the window exists. */
   window: {
     width: number;
@@ -309,6 +316,14 @@ export function installShellUpdate(): Promise<ShellUpdateInstall> {
 
 export function restartApp(): Promise<void> {
   return desktopInvoke<void>("restart_app");
+}
+
+/**
+ * Tell the shell the UI has painted, for the startup timing line in
+ * `desktop/logs/shell.log`. Called once per page load by `DesktopBridge`.
+ */
+export function noteUiReady(elapsedMs: number): Promise<void> {
+  return desktopInvoke<void>("note_ui_ready", { elapsedMs });
 }
 
 export function shellLog(message: string): Promise<void> {

@@ -10,6 +10,7 @@ permissions = [
     "allow-restart-service",
     "allow-shell-settings",
     "allow-update-shell-settings",
+    "allow-note-ui-ready",
     "allow-notify-round-complete",
     "allow-take-notification-target",
     "allow-take-open-request",

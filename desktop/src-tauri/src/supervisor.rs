@@ -17,7 +17,8 @@ use tauri::{AppHandle, WebviewWindow};
 use tauri_plugin_deeptutor::{
     DesktopBackend, DesktopStatus, FirstRunChoices, FirstRunOutcome, FirstRunState,
     NotificationOutcome, NotificationRequest, NotificationTarget, OpenRequestPayload,
-    RuntimeSnapshot, RuntimeUpdateReport, SettingsPatch, ShellSettingsSnapshot, WindowGeometry,
+    RuntimeSnapshot, RuntimeUpdateReport, SettingsPatch, ShellSettingsSnapshot, StartupTimings,
+    WindowGeometry,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
@@ -294,6 +295,11 @@ pub struct Supervisor {
     app: OnceLock<AppHandle>,
     /// The interpreter the launcher was actually started with, for diagnostics.
     interpreter: Mutex<Option<InterpreterCandidate>>,
+    /// Launch timings, filled in as the launch progresses (Phase 4).
+    started_at: Instant,
+    spawn_ms: AtomicU64,
+    ready_ms: AtomicU64,
+    ui_ms: AtomicU64,
 }
 
 impl Supervisor {
@@ -318,6 +324,10 @@ impl Supervisor {
             self_ref: OnceLock::new(),
             app: OnceLock::new(),
             interpreter: Mutex::new(None),
+            started_at: Instant::now(),
+            spawn_ms: AtomicU64::new(0),
+            ready_ms: AtomicU64::new(0),
+            ui_ms: AtomicU64::new(0),
         });
         let _ = supervisor.self_ref.set(Arc::downgrade(&supervisor));
         supervisor
@@ -465,6 +475,10 @@ impl Supervisor {
                     "ready" => {
                         return match info.frontend_url.clone() {
                             Some(url) => {
+                                self.ready_ms.store(
+                                    self.started_at.elapsed().as_millis() as u64,
+                                    Ordering::SeqCst,
+                                );
                                 self.open(&url);
                                 Handshake::Ready
                             }
@@ -612,6 +626,10 @@ impl Supervisor {
         })?;
         *self.child.lock().expect("child lock poisoned") = Some(child);
         self.launch_count.fetch_add(1, Ordering::SeqCst);
+        self.spawn_ms.store(
+            self.started_at.elapsed().as_millis() as u64,
+            Ordering::SeqCst,
+        );
         Ok(())
     }
 
@@ -891,6 +909,7 @@ impl DesktopBackend for Supervisor {
             pack: self.config.active_pack().map(|pack| pack.pack_id),
             logs_dir: self.config.logs_dir.to_string_lossy().into_owned(),
             notifications_posted: self.notifications.posted(),
+            startup: self.startup_timings(),
             window: self.window_geometry(),
             runtime,
         }
@@ -910,6 +929,38 @@ impl DesktopBackend for Supervisor {
 
     fn update_settings(&self, patch: SettingsPatch) -> Result<ShellSettingsSnapshot, String> {
         Supervisor::apply_settings_patch(self, patch)
+    }
+
+    fn note_ui_ready(&self, elapsed_ms: u64) {
+        // `performance.now()` in the app page is measured from that document's
+        // navigation start, which is the moment the shell handed the window over
+        // (`ready_ms`). Adding the two puts the UI's number on the shell's axis.
+        let total = self
+            .ready_ms
+            .load(Ordering::SeqCst)
+            .saturating_add(elapsed_ms);
+        if self.ui_ms.swap(total, Ordering::SeqCst) == 0 {
+            let timings = self.startup_timings();
+            self.append_shell_log(&format!(
+                "startup: spawn {} ms, ready {} ms, first paint {} ms ({} ms after ready)",
+                timings
+                    .as_ref()
+                    .map(|value| value.spawn_ms)
+                    .unwrap_or_default(),
+                timings
+                    .as_ref()
+                    .map(|value| value.ready_ms)
+                    .unwrap_or_default(),
+                timings
+                    .as_ref()
+                    .map(|value| value.ui_ms)
+                    .unwrap_or_default(),
+                timings
+                    .as_ref()
+                    .map(|value| value.ready_to_ui_ms)
+                    .unwrap_or_default(),
+            ));
+        }
     }
 
     fn notify(&self, request: NotificationRequest) -> Result<NotificationOutcome, String> {
@@ -1304,23 +1355,37 @@ impl Supervisor {
                 detail: "未配置运行时更新源：在 desktop/shell.json 写入 pack_catalog，或设置 DEEPTUTOR_DESKTOP_PACK_CATALOG。".to_string(),
             },
             Some(source) => match installer.outdated_from_catalog(&source) {
-                Ok(Some(release)) => RuntimeUpdateReport {
-                    checked: true,
-                    source: Some(source),
-                    updated: false,
-                    app_version: state
-                        .active_pack
-                        .as_ref()
-                        .and_then(|pack_id| installer.load(pack_id).ok())
-                        .map(|pack| pack.manifest.app_version),
-                    active_pack: state.active_pack,
-                    previous_pack: state.previous_pack,
-                    detail: format!(
-                        "有新版本 {} 可用（{} MB）",
-                        release.app_version,
-                        release.size / (1024 * 1024)
-                    ),
-                },
+                Ok(Some(release)) => {
+                    // Say which download the user is actually signing up for.
+                    let incremental = installer.delta_applies(&release);
+                    let bytes = if incremental {
+                        release.delta.as_ref().map(|delta| delta.size).unwrap_or(0)
+                    } else {
+                        release.size
+                    };
+                    RuntimeUpdateReport {
+                        checked: true,
+                        source: Some(source),
+                        updated: false,
+                        app_version: state
+                            .active_pack
+                            .as_ref()
+                            .and_then(|pack_id| installer.load(pack_id).ok())
+                            .map(|pack| pack.manifest.app_version),
+                        active_pack: state.active_pack,
+                        previous_pack: state.previous_pack,
+                        detail: format!(
+                            "有新版本 {} 可用（{} MB{}）",
+                            release.app_version,
+                            bytes / (1024 * 1024),
+                            if incremental {
+                                "，增量更新"
+                            } else {
+                                "，完整包"
+                            }
+                        ),
+                    }
+                }
                 Ok(None) => RuntimeUpdateReport {
                     checked: true,
                     source: Some(source),
@@ -1364,6 +1429,23 @@ fn default_locale() -> String {
 }
 
 impl Supervisor {
+    /// Launch timings, once the UI has reported its first paint.
+    fn startup_timings(&self) -> Option<StartupTimings> {
+        let ui = self.ui_ms.load(Ordering::SeqCst);
+        if ui == 0 {
+            return None;
+        }
+        let ready = self.ready_ms.load(Ordering::SeqCst);
+        Some(StartupTimings {
+            spawn_ms: self.spawn_ms.load(Ordering::SeqCst),
+            ready_ms: ready,
+            ui_ms: ui,
+            // Saturating: a UI that reports before `ready` (a warm reload, say)
+            // is not a reason to wrap around.
+            ready_to_ui_ms: ui.saturating_sub(ready),
+        })
+    }
+
     /// Current main-window geometry, when the window exists.
     ///
     /// Reported because "the window forgot its size" is otherwise invisible in

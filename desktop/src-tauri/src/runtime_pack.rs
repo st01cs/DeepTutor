@@ -18,9 +18,15 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::pack_tree::{
+    clone_tree, create_symlink, move_file, remove_entry, safe_relative_path, tree_digest,
+};
+
 pub const MANIFEST_FILE: &str = "manifest.json";
+pub const DELTA_FILE: &str = "delta.json";
 pub const STATE_FILE: &str = "state.json";
 pub const SCHEMA_VERSION: u32 = 1;
+pub const DELTA_SCHEMA_VERSION: u32 = 1;
 /// Guards against a pack that would unpack into an unrelated corner of the disk.
 const MAX_ENTRY_COUNT: usize = 400_000;
 
@@ -109,6 +115,105 @@ pub struct PackRelease {
     pub size: u64,
     #[serde(default)]
     pub requires_shell: Option<String>,
+    /// Incremental path from one specific base pack, when the release ships one.
+    #[serde(default)]
+    pub delta: Option<PackDeltaRelease>,
+}
+
+/// The delta half of a catalog entry: how to get here from a pack you already have.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PackDeltaRelease {
+    /// The exact pack this delta was built against. A different base means the
+    /// full archive is used instead.
+    pub base_pack_id: String,
+    pub url: String,
+    pub sha256: String,
+    #[serde(default)]
+    pub size: u64,
+}
+
+/// One file a delta adds or replaces.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PackDeltaEntry {
+    /// Relative to the pack root, `/`-separated.
+    pub path: String,
+    #[serde(default)]
+    pub size: u64,
+    /// sha256 of the file's bytes *as shipped* (not path-normalised).
+    pub sha256: String,
+}
+
+/// A symlink the target tree has and the base did not (or had differently).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PackDeltaLink {
+    pub path: String,
+    pub target: String,
+}
+
+/// `delta.json` inside a delta archive, written by `desktop/pack/build_delta.py`.
+///
+/// Everything here is a cross-check: the file hashes prove the payload, and the
+/// tree fingerprints prove the base. A delta that describes a *different* pack
+/// than the one installed is refused, never merged.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PackDelta {
+    pub schema_version: u32,
+    pub base_pack_id: String,
+    pub target_pack_id: String,
+    pub platform: String,
+    #[serde(default)]
+    pub app_version: String,
+    /// Absolute paths the two trees were staged at on the build machine.
+    /// Everything outside `venv/` keeps these forever, so the fingerprint has to
+    /// tokenise them on the installed copy too.
+    #[serde(default)]
+    pub base_root: String,
+    #[serde(default)]
+    pub target_root: String,
+    /// Fingerprint of the base tree, computed with rehydration-normalised
+    /// content so it matches the pack as *installed* (see [`tree_digest`]).
+    pub base_tree_sha256: String,
+    #[serde(default)]
+    pub base_file_count: u64,
+    #[serde(default)]
+    pub base_total_size: u64,
+    /// Fingerprint the tree must have once the delta has been applied.
+    pub target_tree_sha256: String,
+    #[serde(default)]
+    pub added: Vec<PackDeltaEntry>,
+    #[serde(default)]
+    pub changed: Vec<PackDeltaEntry>,
+    #[serde(default)]
+    pub removed: Vec<String>,
+    #[serde(default)]
+    pub links: Vec<PackDeltaLink>,
+}
+
+impl PackDelta {
+    pub fn read(directory: &Path) -> Result<Self, String> {
+        let path = directory.join(DELTA_FILE);
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("无法读取 {}: {error}", path.display()))?;
+        let delta: Self = serde_json::from_str(&text)
+            .map_err(|error| format!("{} 不是合法的增量清单: {error}", path.display()))?;
+        if delta.schema_version != DELTA_SCHEMA_VERSION {
+            return Err(format!(
+                "增量清单版本 {} 不受支持（期望 {DELTA_SCHEMA_VERSION}）",
+                delta.schema_version
+            ));
+        }
+        Ok(delta)
+    }
+
+    /// Every path the delta may write or delete.
+    pub fn touched_paths(&self) -> impl Iterator<Item = &str> {
+        self.added
+            .iter()
+            .chain(self.changed.iter())
+            .map(|entry| entry.path.as_str())
+            .chain(self.links.iter().map(|link| link.path.as_str()))
+            .chain(self.removed.iter().map(String::as_str))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -237,11 +342,37 @@ impl PackInstaller {
 
     /// Install the newest catalog pack for this platform, if it is newer than
     /// what is active. Returns `None` when already up to date.
+    ///
+    /// When the catalog offers a delta against the pack that is *currently*
+    /// active, that is used instead of the full archive: the delta is a few
+    /// percent of the download, and it is refused (falling back to the full
+    /// pack) whenever the base is not exactly what it was cut against.
     pub fn update_from_catalog(&self, source: &str) -> Result<Option<InstalledPack>, String> {
         let catalog = self.catalog(source)?;
         let Some(best) = newest_for_host(&catalog, self.active_version().as_str())? else {
             return Ok(None);
         };
+        if let Some(delta) = &best.delta {
+            if self.active().map(|pack| pack.pack_id) == Some(delta.base_pack_id.clone()) {
+                let url = resolve_relative(source, &delta.url);
+                log(&format!(
+                    "updating {} -> {} with a delta ({} MB instead of a full pack)",
+                    delta.base_pack_id,
+                    best.pack_id,
+                    delta.size / (1024 * 1024)
+                ));
+                match self.install_delta_from_url(&url, &delta.sha256) {
+                    Ok(pack) => return Ok(Some(pack)),
+                    Err(error) => {
+                        // An unusable delta must not cost the user the update:
+                        // log it and take the long way round.
+                        log(&format!(
+                            "delta update failed ({error}); falling back to the full pack"
+                        ));
+                    }
+                }
+            }
+        }
         let url = resolve_relative(source, &best.url);
         let pack = self.install_from_url(&url, &best.sha256)?;
         Ok(Some(pack))
@@ -254,6 +385,18 @@ impl PackInstaller {
     pub fn outdated_from_catalog(&self, source: &str) -> Result<Option<PackRelease>, String> {
         let catalog = self.catalog(source)?;
         newest_for_host(&catalog, self.active_version().as_str())
+    }
+
+    /// Whether `release`'s delta can be applied to the pack that is active now.
+    ///
+    /// The check reports the download the user would actually take: an
+    /// applicable delta is a fraction of the full pack, and announcing 250 MB
+    /// when the update is 20 MB would make the check look worse than it is.
+    pub fn delta_applies(&self, release: &PackRelease) -> bool {
+        let Some(delta) = &release.delta else {
+            return false;
+        };
+        self.active().map(|pack| pack.pack_id) == Some(delta.base_pack_id.clone())
     }
 
     fn active_version(&self) -> String {
@@ -304,6 +447,15 @@ impl PackInstaller {
         }
         fs::rename(&staging, &target)
             .map_err(|error| format!("无法就位 {}: {error}", target.display()))?;
+        // The tree just moved, and a pack's self-references are absolute:
+        // `pyvenv.cfg`'s `home`, entry-point shebangs and the `.dist-info`
+        // metadata all name the pack's own directory. Rehydrating only before
+        // the rename left every installed pack pointing at its staging path
+        // (found on 2026-09-24 while fingerprinting a pack for an incremental
+        // update). Do it again here, where the pack actually lives, and smoke
+        // test the result rather than trusting the pre-move one.
+        rehydrate(&target)?;
+        smoke_test(&target, &manifest)?;
         self.activate(&manifest.pack_id)?;
         log(&format!("runtime pack {} installed", manifest.pack_id));
         self.load(&manifest.pack_id)
@@ -324,14 +476,8 @@ impl PackInstaller {
                 .filter(|name| !name.is_empty())
                 .unwrap_or("runtime-pack.tar.gz"),
         );
-        log(&format!("downloading runtime pack from {url}"));
-        let response = ureq::get(url)
-            .call()
-            .map_err(|error| format!("下载运行时包失败: {error}"))?;
-        let mut reader = response.into_reader();
-        let mut file = File::create(&target).map_err(|error| error.to_string())?;
-        std::io::copy(&mut reader, &mut file).map_err(|error| format!("写入下载失败: {error}"))?;
-        file.flush().map_err(|error| error.to_string())?;
+        log(&format!("fetching runtime pack from {url}"));
+        fetch_archive(url, &target)?;
         let installed = self.install_archive(&target, Some(expected_sha256))?;
         let _ = fs::remove_file(&target);
         Ok(installed)
@@ -361,6 +507,229 @@ impl PackInstaller {
         log(&format!("rolled back to runtime pack {previous}"));
         Ok(pack)
     }
+
+    /// Install an incremental update on top of the pack that is active.
+    ///
+    /// Unlike [`PackInstaller::install_archive`], the payload is a *patch*: the
+    /// new tree is the installed pack plus the delta's files. That is why the
+    /// base is fingerprinted first and the result is fingerprinted again — an
+    /// incremental update is only safe if both ends are the ones the builder
+    /// signed off on.
+    pub fn install_delta_archive(
+        &self,
+        archive: &Path,
+        expected_sha256: Option<&str>,
+    ) -> Result<InstalledPack, String> {
+        if let Some(expected) = expected_sha256 {
+            let actual = sha256_file(archive)?;
+            if !actual.eq_ignore_ascii_case(expected) {
+                return Err(format!(
+                    "增量包校验失败：期望 {expected}，实际 {actual}（已拒绝安装）"
+                ));
+            }
+        }
+        let staging = self
+            .runtimes_dir
+            .join(format!(".delta-incoming-{}", std::process::id()));
+        if staging.exists() {
+            fs::remove_dir_all(&staging).map_err(|error| error.to_string())?;
+        }
+        fs::create_dir_all(&staging).map_err(|error| format!("无法创建暂存目录: {error}"))?;
+        match self.apply_delta(archive, &staging) {
+            Ok(pack) => {
+                let _ = fs::remove_dir_all(&staging);
+                Ok(pack)
+            }
+            Err(error) => {
+                // The live pack is untouched: everything happened in staging.
+                let _ = fs::remove_dir_all(&staging);
+                Err(error)
+            }
+        }
+    }
+
+    /// Download then apply: how an incremental runtime update arrives.
+    pub fn install_delta_from_url(
+        &self,
+        url: &str,
+        expected_sha256: &str,
+    ) -> Result<InstalledPack, String> {
+        let downloads = self.runtimes_dir.join(".downloads");
+        fs::create_dir_all(&downloads).map_err(|error| error.to_string())?;
+        let target = downloads.join(
+            url.rsplit('/')
+                .next()
+                .filter(|name| !name.is_empty())
+                .unwrap_or("runtime-delta.tar.gz"),
+        );
+        log(&format!("fetching runtime delta from {url}"));
+        fetch_archive(url, &target)?;
+        let installed = self.install_delta_archive(&target, Some(expected_sha256))?;
+        let _ = fs::remove_file(&target);
+        Ok(installed)
+    }
+
+    fn apply_delta(&self, archive: &Path, staging: &Path) -> Result<InstalledPack, String> {
+        let started = std::time::Instant::now();
+        extract_tar_gz(archive, staging)?;
+        let delta = PackDelta::read(staging)?;
+        log(&format!(
+            "delta {} -> {}: {} added, {} changed, {} removed (unpacked in {:.1}s)",
+            delta.base_pack_id,
+            delta.target_pack_id,
+            delta.added.len(),
+            delta.changed.len(),
+            delta.removed.len(),
+            started.elapsed().as_secs_f32()
+        ));
+
+        // Every path is checked before anything is written: a delta that names
+        // one unsafe path must not leave a half-patched tree behind.
+        for path in delta.touched_paths() {
+            safe_relative_path(path)?;
+        }
+
+        let active = self
+            .active()
+            .ok_or_else(|| "没有已安装的运行时包可以作为增量更新的基线".to_string())?;
+        if delta.base_pack_id != active.pack_id {
+            return Err(format!(
+                "这个增量包是为 {} 准备的，本机当前是 {}；请下载完整运行时包",
+                delta.base_pack_id, active.pack_id
+            ));
+        }
+        if delta.platform != host_platform() {
+            return Err(format!(
+                "这个增量包是为 {} 构建的，本机是 {}",
+                delta.platform,
+                host_platform()
+            ));
+        }
+
+        // The base must be the build the delta was cut against, not merely a
+        // pack with the same name: a half-written or hand-edited pack would
+        // otherwise be patched into something that only looks right.
+        // The installed base still carries the *build* directory in everything
+        // rehydration does not touch (the delta names it for exactly this
+        // reason), so both spellings are tokenised before comparing.
+        let stale = [delta.base_root.clone()];
+        let base = tree_digest(&active.dir, &stale)?;
+        log(&format!(
+            "delta: base fingerprint {} files / {} MB in {:.1}s",
+            base.files,
+            base.bytes / (1024 * 1024),
+            started.elapsed().as_secs_f32()
+        ));
+        if base.files != delta.base_file_count || base.bytes != delta.base_total_size {
+            return Err(format!(
+                "基线包内容与增量不匹配（文件数 {}/{}，大小 {}/{}）",
+                base.files, delta.base_file_count, base.bytes, delta.base_total_size
+            ));
+        }
+        if base.sha256 != delta.base_tree_sha256 {
+            return Err("基线包指纹与增量不匹配（基线可能已损坏或来自别的构建）".to_string());
+        }
+
+        // Everything below happens inside `staging`; the live pack stays as it is
+        // until the very last rename.
+        let tree = staging.join("tree");
+        clone_tree(&active.dir, &tree)?;
+        log(&format!(
+            "delta: base cloned (hard links) in {:.1}s",
+            started.elapsed().as_secs_f32()
+        ));
+
+        let payload = staging.join("files");
+        for entry in delta.added.iter().chain(delta.changed.iter()) {
+            let relative = safe_relative_path(&entry.path)?;
+            let source = payload.join(&relative);
+            let actual =
+                sha256_file(&source).map_err(|_| format!("增量包缺少文件 {}", entry.path))?;
+            if !actual.eq_ignore_ascii_case(&entry.sha256) {
+                return Err(format!(
+                    "增量文件校验失败：{}（期望 {}，实际 {actual}）",
+                    entry.path, entry.sha256
+                ));
+            }
+            let destination = tree.join(&relative);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            if destination.symlink_metadata().is_ok() {
+                remove_entry(&destination)?;
+            }
+            move_file(&source, &destination)?;
+        }
+
+        for link in &delta.links {
+            let relative = safe_relative_path(&link.path)?;
+            let destination = tree.join(&relative);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            if destination.symlink_metadata().is_ok() {
+                remove_entry(&destination)?;
+            }
+            create_symlink(&link.target, &destination)?;
+        }
+
+        for path in &delta.removed {
+            let relative = safe_relative_path(path)?;
+            let victim = tree.join(&relative);
+            if victim.symlink_metadata().is_ok() {
+                remove_entry(&victim)?;
+            }
+        }
+
+        // The applied tree is a mix of three spellings: files that were already
+        // in the installed base still say *their* directory (rehydration
+        // rewrote the venv when that pack was installed), everything rehydration
+        // never touched says the base's build directory, and the delta's own
+        // files say the target's build directory.
+        let applied_roots = [
+            delta.base_root.clone(),
+            delta.target_root.clone(),
+            active.dir.to_string_lossy().into_owned(),
+        ];
+        let applied = tree_digest(&tree, &applied_roots)?;
+        log(&format!(
+            "delta: applied and re-fingerprinted in {:.1}s",
+            started.elapsed().as_secs_f32()
+        ));
+        if applied.sha256 != delta.target_tree_sha256 {
+            return Err(format!(
+                "应用增量后的目录树与目标不一致（{} 个文件，{} 字节）",
+                applied.files, applied.bytes
+            ));
+        }
+
+        let manifest = PackManifest::read(&tree)?;
+        if manifest.pack_id != delta.target_pack_id {
+            return Err(format!(
+                "增量包声明的目标是 {}，清单里却是 {}",
+                delta.target_pack_id, manifest.pack_id
+            ));
+        }
+        rehydrate(&tree)?;
+        smoke_test(&tree, &manifest)?;
+
+        let target = self.runtimes_dir.join(&manifest.pack_id);
+        if target.exists() {
+            fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
+        }
+        fs::rename(&tree, &target)
+            .map_err(|error| format!("无法就位 {}: {error}", target.display()))?;
+        // Same lesson as `install_archive`: the pack's self-references must name
+        // where it ended up, not where it was assembled.
+        rehydrate(&target)?;
+        smoke_test(&target, &manifest)?;
+        self.activate(&manifest.pack_id)?;
+        log(&format!(
+            "runtime pack {} installed from delta off {}",
+            manifest.pack_id, delta.base_pack_id
+        ));
+        self.load(&manifest.pack_id)
+    }
 }
 
 /// Read a catalog/archive location: `http(s)` goes over the network, anything
@@ -376,6 +745,33 @@ fn fetch_text(source: &str) -> Result<String, String> {
             .map_err(|error| format!("读取 {source} 失败: {error}"));
     }
     fs::read_to_string(source).map_err(|error| format!("无法读取 {source}: {error}"))
+}
+
+/// Bring an archive (full pack or delta) into `target`, from the network or
+/// from disk.
+///
+/// A catalog's URLs are resolved against the catalog's own location, so an
+/// offline mirror — or a local test catalog — yields plain paths. Those used to
+/// fail inside the HTTP client ("relative URL without a base"), which meant a
+/// file-based catalog could be *read* but never *used*.
+fn fetch_archive(source: &str, target: &Path) -> Result<(), String> {
+    if source.starts_with("http://") || source.starts_with("https://") {
+        let response = ureq::get(source)
+            .call()
+            .map_err(|error| format!("下载 {source} 失败: {error}"))?;
+        let mut reader = response.into_reader();
+        let mut file = File::create(target).map_err(|error| error.to_string())?;
+        std::io::copy(&mut reader, &mut file).map_err(|error| format!("写入下载失败: {error}"))?;
+        file.flush().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    let source = Path::new(source);
+    if source == target {
+        return Ok(());
+    }
+    fs::copy(source, target)
+        .map(|_| ())
+        .map_err(|error| format!("无法复制 {}: {error}", source.display()))
 }
 
 /// Resolve a catalog-relative URL against the catalog's own location, so a
