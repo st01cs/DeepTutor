@@ -54,12 +54,17 @@ KNOWN_PLATFORMS: tuple[str, ...] = (
     "linux-x86_64",
 )
 
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", required=True, help="latest.json to write (merged when present)")
+    parser.add_argument(
+        "--manifest", required=True, help="latest.json to write (merged when present)"
+    )
     parser.add_argument("--version", required=True, help="release version this manifest describes")
     parser.add_argument("--platform", required=True, choices=KNOWN_PLATFORMS)
-    parser.add_argument("--artifact", required=True, help="artifact path (basename becomes the URL)")
+    parser.add_argument(
+        "--artifact", required=True, help="artifact path (basename becomes the URL)"
+    )
     parser.add_argument(
         "--signature",
         required=True,

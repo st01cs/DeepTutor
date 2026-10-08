@@ -28,9 +28,7 @@ def write_pack(root: Path, *, version: str, marker: str) -> Path:
     (root / "venv" / "bin").mkdir(parents=True)
     (root / "python" / "bin").mkdir(parents=True)
     (root / "node" / "bin").mkdir(parents=True)
-    (root / "venv" / "pyvenv.cfg").write_text(
-        f"home = {root}/python/bin\n", encoding="utf-8"
-    )
+    (root / "venv" / "pyvenv.cfg").write_text(f"home = {root}/python/bin\n", encoding="utf-8")
     (root / "venv" / "bin" / "deeptutor").write_text(
         f"#!/usr/bin/env python3\n# {marker}\n", encoding="utf-8"
     )
@@ -38,8 +36,12 @@ def write_pack(root: Path, *, version: str, marker: str) -> Path:
     (root / "node" / "bin" / "node").write_bytes(b"node runtime, unchanged")
     (root / "manifest.json").write_text(
         json.dumps(
-            {"schema_version": 1, "pack_id": f"{version}-macos-aarch64",
-             "app_version": version, "platform": "macos-aarch64"},
+            {
+                "schema_version": 1,
+                "pack_id": f"{version}-macos-aarch64",
+                "app_version": version,
+                "platform": "macos-aarch64",
+            },
             ensure_ascii=False,
         )
         + "\n",
@@ -182,7 +184,9 @@ def test_a_delta_that_is_not_worth_shipping_is_skipped(tmp_path: Path) -> None:
     for index in range(3):
         (base / "python" / "bin" / f"blob{index}").write_bytes(os.urandom(200_000))
         payload = (
-            os.urandom(200_000) if index < 2 else (base / "python" / "bin" / f"blob{index}").read_bytes()
+            os.urandom(200_000)
+            if index < 2
+            else (base / "python" / "bin" / f"blob{index}").read_bytes()
         )
         (target / "python" / "bin" / f"blob{index}").write_bytes(payload)
     out = tmp_path / "dist"

@@ -432,8 +432,12 @@ def build_delta(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", type=Path, required=True, help="staged base pack (or its .tar.gz)")
-    parser.add_argument("--target", type=Path, required=True, help="staged target pack (or its .tar.gz)")
+    parser.add_argument(
+        "--base", type=Path, required=True, help="staged base pack (or its .tar.gz)"
+    )
+    parser.add_argument(
+        "--target", type=Path, required=True, help="staged target pack (or its .tar.gz)"
+    )
     parser.add_argument("--out", type=Path, default=None, help="output directory")
     parser.add_argument(
         "--max-ratio",
@@ -459,7 +463,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    out_dir = args.out or (args.target.parent if args.target.parent.name == "dist" else Path(__file__).parent / "dist")
+    out_dir = args.out or (
+        args.target.parent if args.target.parent.name == "dist" else Path(__file__).parent / "dist"
+    )
     with tempfile.TemporaryDirectory(prefix="deeptutor-delta-") as workdir:
         work = Path(workdir)
         base_root = materialise(args.base, work)
@@ -475,7 +481,22 @@ def main() -> int:
     if delta.get("skipped"):
         print(f"skipped incremental update: {delta['size']} bytes vs {delta['full_size']} full")
         return 0
-    print(json.dumps({k: delta[k] for k in ("base_pack_id", "target_pack_id", "added", "changed", "removed", "unchanged_file_count")}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                k: delta[k]
+                for k in (
+                    "base_pack_id",
+                    "target_pack_id",
+                    "added",
+                    "changed",
+                    "removed",
+                    "unchanged_file_count",
+                )
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 

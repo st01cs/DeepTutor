@@ -7,14 +7,16 @@ file (a signature the updater would reject only after a user tried to update).
 
 from __future__ import annotations
 
-import importlib.util
 import base64
+import importlib.util
 import json
 from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "desktop" / "scripts" / "assemble_updater_manifest.py"
+SCRIPT = (
+    Path(__file__).resolve().parents[2] / "desktop" / "scripts" / "assemble_updater_manifest.py"
+)
 SPEC = importlib.util.spec_from_file_location("assemble_updater_manifest", SCRIPT)
 assert SPEC and SPEC.loader
 manifest_script = importlib.util.module_from_spec(SPEC)
@@ -73,24 +75,40 @@ def test_first_platform_writes_a_complete_manifest(tmp_path: Path) -> None:
     entry = payload["platforms"]["darwin-aarch64"]
     assert entry["url"].endswith("/DeepTutor.app.tar.gz")
     # Stored exactly as the updater expects it: base64 around a minisign file.
-    assert (
-        base64.b64decode(entry["signature"]).decode("utf-8").startswith("untrusted comment:")
-    )
+    assert base64.b64decode(entry["signature"]).decode("utf-8").startswith("untrusted comment:")
 
 
 def test_merging_keeps_the_platforms_already_published(tmp_path: Path) -> None:
     manifest = tmp_path / "latest.json"
     mac = write_artifact(tmp_path, "DeepTutor.app.tar.gz")
     run_manifest(
-        "--manifest", str(manifest), "--version", "1.6.11",
-        "--platform", "darwin-aarch64", "--artifact", str(mac),
-        "--signature", f"{mac}.sig", "--base-url", "https://example.test/v1.6.11/",
+        "--manifest",
+        str(manifest),
+        "--version",
+        "1.6.11",
+        "--platform",
+        "darwin-aarch64",
+        "--artifact",
+        str(mac),
+        "--signature",
+        f"{mac}.sig",
+        "--base-url",
+        "https://example.test/v1.6.11/",
     )
     windows = write_artifact(tmp_path, "DeepTutor_1.6.11_x64-setup.exe")
     run_manifest(
-        "--manifest", str(manifest), "--version", "1.6.11",
-        "--platform", "windows-x86_64", "--artifact", str(windows),
-        "--signature", f"{windows}.sig", "--base-url", "https://example.test/v1.6.11/",
+        "--manifest",
+        str(manifest),
+        "--version",
+        "1.6.11",
+        "--platform",
+        "windows-x86_64",
+        "--artifact",
+        str(windows),
+        "--signature",
+        f"{windows}.sig",
+        "--base-url",
+        "https://example.test/v1.6.11/",
     )
 
     payload = json.loads(manifest.read_text(encoding="utf-8"))
@@ -103,15 +121,33 @@ def test_a_second_version_is_refused(tmp_path: Path) -> None:
     manifest = tmp_path / "latest.json"
     artifact = write_artifact(tmp_path, "DeepTutor.app.tar.gz")
     run_manifest(
-        "--manifest", str(manifest), "--version", "1.6.11",
-        "--platform", "darwin-aarch64", "--artifact", str(artifact),
-        "--signature", f"{artifact}.sig", "--base-url", "https://example.test/",
+        "--manifest",
+        str(manifest),
+        "--version",
+        "1.6.11",
+        "--platform",
+        "darwin-aarch64",
+        "--artifact",
+        str(artifact),
+        "--signature",
+        f"{artifact}.sig",
+        "--base-url",
+        "https://example.test/",
     )
     with pytest.raises(SystemExit, match="refusing to mix"):
         run_manifest(
-            "--manifest", str(manifest), "--version", "1.6.12",
-            "--platform", "windows-x86_64", "--artifact", str(artifact),
-            "--signature", f"{artifact}.sig", "--base-url", "https://example.test/",
+            "--manifest",
+            str(manifest),
+            "--version",
+            "1.6.12",
+            "--platform",
+            "windows-x86_64",
+            "--artifact",
+            str(artifact),
+            "--signature",
+            f"{artifact}.sig",
+            "--base-url",
+            "https://example.test/",
         )
 
 
@@ -119,10 +155,18 @@ def test_an_unknown_platform_is_rejected_before_it_is_written(tmp_path: Path) ->
     artifact = write_artifact(tmp_path, "DeepTutor.app.tar.gz")
     with pytest.raises(SystemExit):
         run_manifest(
-            "--manifest", str(tmp_path / "latest.json"), "--version", "1.6.11",
-            "--platform", "macos-arm64",  # the *pack* name, not the updater key
-            "--artifact", str(artifact), "--signature", f"{artifact}.sig",
-            "--base-url", "https://example.test/",
+            "--manifest",
+            str(tmp_path / "latest.json"),
+            "--version",
+            "1.6.11",
+            "--platform",
+            "macos-arm64",  # the *pack* name, not the updater key
+            "--artifact",
+            str(artifact),
+            "--signature",
+            f"{artifact}.sig",
+            "--base-url",
+            "https://example.test/",
         )
 
 
@@ -132,15 +176,33 @@ def test_a_missing_or_empty_signature_is_refused(tmp_path: Path) -> None:
     empty.write_text("\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="empty"):
         run_manifest(
-            "--manifest", str(tmp_path / "latest.json"), "--version", "1.6.11",
-            "--platform", "darwin-aarch64", "--artifact", str(artifact),
-            "--signature", str(empty), "--base-url", "https://example.test/",
+            "--manifest",
+            str(tmp_path / "latest.json"),
+            "--version",
+            "1.6.11",
+            "--platform",
+            "darwin-aarch64",
+            "--artifact",
+            str(artifact),
+            "--signature",
+            str(empty),
+            "--base-url",
+            "https://example.test/",
         )
     with pytest.raises(SystemExit, match="not found"):
         run_manifest(
-            "--manifest", str(tmp_path / "latest.json"), "--version", "1.6.11",
-            "--platform", "darwin-aarch64", "--artifact", str(artifact),
-            "--signature", str(tmp_path / "nope.sig"), "--base-url", "https://example.test/",
+            "--manifest",
+            str(tmp_path / "latest.json"),
+            "--version",
+            "1.6.11",
+            "--platform",
+            "darwin-aarch64",
+            "--artifact",
+            str(artifact),
+            "--signature",
+            str(tmp_path / "nope.sig"),
+            "--base-url",
+            "https://example.test/",
         )
 
 
@@ -151,9 +213,18 @@ def test_an_unencoded_minisign_file_is_refused(tmp_path: Path) -> None:
     raw.write_text(MINISIGN, encoding="utf-8")
     with pytest.raises(SystemExit, match="base64"):
         run_manifest(
-            "--manifest", str(tmp_path / "latest.json"), "--version", "1.6.11",
-            "--platform", "darwin-aarch64", "--artifact", str(artifact),
-            "--signature", str(raw), "--base-url", "https://example.test/",
+            "--manifest",
+            str(tmp_path / "latest.json"),
+            "--version",
+            "1.6.11",
+            "--platform",
+            "darwin-aarch64",
+            "--artifact",
+            str(artifact),
+            "--signature",
+            str(raw),
+            "--base-url",
+            "https://example.test/",
         )
 
 
@@ -162,10 +233,18 @@ def test_a_missing_artifact_is_refused(tmp_path: Path) -> None:
     signature.write_text(SIGNATURE, encoding="utf-8")
     with pytest.raises(SystemExit, match="artifact not found"):
         run_manifest(
-            "--manifest", str(tmp_path / "latest.json"), "--version", "1.6.11",
-            "--platform", "darwin-aarch64",
-            "--artifact", str(tmp_path / "absent.app.tar.gz"),
-            "--signature", str(signature), "--base-url", "https://example.test/",
+            "--manifest",
+            str(tmp_path / "latest.json"),
+            "--version",
+            "1.6.11",
+            "--platform",
+            "darwin-aarch64",
+            "--artifact",
+            str(tmp_path / "absent.app.tar.gz"),
+            "--signature",
+            str(signature),
+            "--base-url",
+            "https://example.test/",
         )
 
 
@@ -175,10 +254,20 @@ def test_notes_come_from_the_release_body(tmp_path: Path) -> None:
     notes.write_text("## 1.6.11\n\n- tray, notifications, deep links\n", encoding="utf-8")
     manifest = tmp_path / "latest.json"
     run_manifest(
-        "--manifest", str(manifest), "--version", "1.6.11",
-        "--platform", "darwin-aarch64", "--artifact", str(artifact),
-        "--signature", f"{artifact}.sig", "--base-url", "https://example.test/",
-        "--notes-file", str(notes),
+        "--manifest",
+        str(manifest),
+        "--version",
+        "1.6.11",
+        "--platform",
+        "darwin-aarch64",
+        "--artifact",
+        str(artifact),
+        "--signature",
+        f"{artifact}.sig",
+        "--base-url",
+        "https://example.test/",
+        "--notes-file",
+        str(notes),
     )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert payload["notes"].startswith("## 1.6.11")

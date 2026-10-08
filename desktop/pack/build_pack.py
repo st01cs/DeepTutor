@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -38,7 +37,6 @@ import stat
 import subprocess
 import sys
 import tarfile
-import tempfile
 import time
 import urllib.request
 import zipfile
@@ -159,9 +157,7 @@ def fetch_checksums(url: str) -> dict[str, str]:
         return parse_checksums(response.read().decode("utf-8", "replace"))
 
 
-def download_verified(
-    url: str, destination: Path, *, checksums_url: str, source: str
-) -> None:
+def download_verified(url: str, destination: Path, *, checksums_url: str, source: str) -> None:
     """Fetch `url` and refuse to keep bytes upstream does not vouch for.
 
     A truncated or swapped download of CPython or Node ends up *executed* inside
@@ -189,8 +185,7 @@ def download_verified(
     if actual != expected:
         destination.unlink(missing_ok=True)
         raise SystemExit(
-            f"{destination.name} failed its {source} checksum: expected {expected}, "
-            f"got {actual}"
+            f"{destination.name} failed its {source} checksum: expected {expected}, got {actual}"
         )
     log(f"checksum ok for {destination.name}")
 
@@ -208,11 +203,7 @@ class _ZipEntry:
         self._mode = info.external_attr >> 16
 
     def isdev(self) -> bool:
-        return (
-            stat.S_ISCHR(self._mode)
-            or stat.S_ISBLK(self._mode)
-            or stat.S_ISFIFO(self._mode)
-        )
+        return stat.S_ISCHR(self._mode) or stat.S_ISBLK(self._mode) or stat.S_ISFIFO(self._mode)
 
     def issym(self) -> bool:
         return False
@@ -248,9 +239,7 @@ def _reject_unsafe_members(destination: Path, members: list, *, kind: str) -> No
         if member.issym() or member.islnk():
             link = member.linkname
             if Path(link).is_absolute() or _escapes(root, target.parent / link):
-                raise SystemExit(
-                    f"{kind} link escapes the destination: {name} -> {link}"
-                )
+                raise SystemExit(f"{kind} link escapes the destination: {name} -> {link}")
 
 
 def extract_archive(archive: Path, destination: Path) -> None:
@@ -263,9 +252,7 @@ def extract_archive(archive: Path, destination: Path) -> None:
                 # generic check cannot see it; nothing legitimate needs one here.
                 if stat.S_ISLNK(info.external_attr >> 16):
                     raise SystemExit(f"zip entry is a symlink: {info.filename}")
-            _reject_unsafe_members(
-                destination, [_ZipEntry(info) for info in infos], kind="zip"
-            )
+            _reject_unsafe_members(destination, [_ZipEntry(info) for info in infos], kind="zip")
             handle.extractall(destination, members=infos)
         return
     with tarfile.open(archive, "r:gz") as handle:
@@ -324,9 +311,7 @@ def prepare_web(skip_build: bool) -> None:
     standalone = web_dir / ".next" / "standalone" / "server.js"
     if skip_build:
         if not standalone.exists():
-            raise SystemExit(
-                f"--skip-web-build needs an existing build at {standalone}"
-            )
+            raise SystemExit(f"--skip-web-build needs an existing build at {standalone}")
     elif not standalone.exists():
         if not (web_dir / "node_modules").exists():
             run(["npm", "ci", "--legacy-peer-deps"], cwd=web_dir)
@@ -382,10 +367,7 @@ def assert_wheel_matches_label(wheel: Path, label: str) -> None:
 def fetch_python(stage: Path, *, tag: str, version: str, target: str) -> tuple[Path, str]:
     triple = PBS_TRIPLES[target]
     name = f"cpython-{version}+{tag}-{triple}-install_only.tar.gz"
-    release = (
-        "https://github.com/astral-sh/python-build-standalone/releases/download/"
-        f"{tag}"
-    )
+    release = f"https://github.com/astral-sh/python-build-standalone/releases/download/{tag}"
     archive = PACK_DIR / ".cache" / name
     # This tree becomes the interpreter every pack runs, so the bytes are checked
     # against what the release publishes before they are unpacked.
@@ -422,9 +404,7 @@ def fetch_node(stage: Path, *, version: str, target: str) -> Path:
 
 
 def python_in_python_dir(python_dir: Path) -> Path:
-    candidate = (
-        python_dir / "python.exe" if os.name == "nt" else python_dir / "bin" / "python3"
-    )
+    candidate = python_dir / "python.exe" if os.name == "nt" else python_dir / "bin" / "python3"
     if not candidate.exists():
         raise SystemExit(f"no interpreter at {candidate}")
     return candidate
@@ -545,7 +525,9 @@ def main() -> int:
     parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK)
     parser.add_argument("--out", type=Path, default=PACK_DIR / "dist")
     parser.add_argument("--skip-web-build", action="store_true")
-    parser.add_argument("--stage-only", action="store_true", help="build the tree, skip the archive")
+    parser.add_argument(
+        "--stage-only", action="store_true", help="build the tree, skip the archive"
+    )
     args = parser.parse_args()
 
     if args.platform != host_platform():
