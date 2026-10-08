@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -225,7 +226,7 @@ def test_session_list_command_uses_shared_store(monkeypatch) -> None:
 
 
 def test_start_command_delegates_to_runtime_launcher(monkeypatch) -> None:
-    calls: list[object] = []
+    calls: list[dict[str, object]] = []
 
     def _fake_start(  # noqa: ANN001
         home=None,
@@ -233,20 +234,65 @@ def test_start_command_delegates_to_runtime_launcher(monkeypatch) -> None:
         dev=False,
         detach=False,
         open_browser=True,
+        runtime_info=None,
+        auto_ports=False,
+        parent_pid=None,
     ):
-        calls.append((home, dev, detach, open_browser))
+        calls.append(
+            {
+                "home": home,
+                "dev": dev,
+                "detach": detach,
+                "open_browser": open_browser,
+                "runtime_info": runtime_info,
+                "auto_ports": auto_ports,
+                "parent_pid": parent_pid,
+            }
+        )
 
     monkeypatch.setattr("deeptutor.runtime.launcher.start", _fake_start)
 
     result = runner.invoke(app, ["start"])
 
     assert result.exit_code == 0, result.output
-    assert calls == [(None, False, False, True)]
+    assert calls == [
+        {
+            "home": None,
+            "dev": False,
+            "detach": False,
+            "open_browser": True,
+            "runtime_info": None,
+            "auto_ports": False,
+            "parent_pid": None,
+        }
+    ]
 
     result = runner.invoke(app, ["start", "--dev", "--detach", "--no-browser"])
 
     assert result.exit_code == 0, result.output
-    assert calls[-1] == (None, True, True, False)
+    assert calls[-1]["dev"] is True
+    assert calls[-1]["detach"] is True
+    assert calls[-1]["open_browser"] is False
+
+    # The desktop shell drives `start` through these three flags: it reads the
+    # launcher state file instead of a terminal, has nobody to answer a port
+    # prompt, and must exit with the shell that spawned it (orphan guard).
+    result = runner.invoke(
+        app,
+        [
+            "start",
+            "--runtime-info",
+            "/tmp/deeptutor-runtime.json",
+            "--auto-ports",
+            "--parent-pid",
+            "4242",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[-1]["runtime_info"] == Path("/tmp/deeptutor-runtime.json")
+    assert calls[-1]["auto_ports"] is True
+    assert calls[-1]["parent_pid"] == 4242
 
 
 def test_stop_command_delegates_to_detached_launcher(monkeypatch) -> None:
