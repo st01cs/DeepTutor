@@ -2431,12 +2431,16 @@ async def test_cold_start_stalled_provider_settles_with_bounded_retries(monkeypa
         assert failure.value.partial_response is (phase == "partial_stream")
         if phase != "connect":
             assert len(stopped) == len(attempts)
-        assert (
-            sum(event.metadata.get("error_code") == "provider_transport" for event in events) >= 1
-        )
     finally:
         await bus.close()
         await consumer
+
+    # The final failure event is published while the turn unwinds, so it is only
+    # guaranteed to be in ``events`` once the bus has been drained. CPython 3.12
+    # and later do not hand the consumer a turn on that raise path, which is why
+    # reading the list inside the ``try`` saw nothing for ``partial_stream``
+    # (Python 3.11 happened to schedule the consumer first).
+    assert sum(event.metadata.get("error_code") == "provider_transport" for event in events) >= 1
 
 
 @pytest.mark.asyncio

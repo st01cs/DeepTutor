@@ -2236,6 +2236,16 @@ mod tests {
             &|_| None,
         );
         let supervisor = Supervisor::new_shared(config);
+        // The validation messages below are localized, so pin the shell
+        // language instead of letting the runner's LANG/LC_ALL decide what this
+        // test reads: CI exports en_US.UTF-8, while an unset locale falls back
+        // to Chinese.
+        supervisor
+            .apply_settings_patch(SettingsPatch {
+                locale: Some("zh-CN".to_string()),
+                ..SettingsPatch::default()
+            })
+            .expect("pin the shell language");
         let request = |route: &str, title: &str, body: &str| NotificationRequest {
             title: title.to_string(),
             body: body.to_string(),
