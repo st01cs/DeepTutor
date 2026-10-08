@@ -244,6 +244,255 @@ def test_llm_atlascloud_base_url_detection_preserves_openai_binding_compatibilit
     assert resolved.effective_url == "https://api.atlascloud.ai/v1"
 
 
+def test_llm_unifically_binding_uses_default_openai_compatible_endpoint() -> None:
+    catalog = _build_catalog(
+        llm_profile={
+            "id": "llm-p",
+            "name": "Unifically",
+            "binding": "unifically",
+            "base_url": "",
+            "api_key": "unifically-key",
+            "api_version": "",
+            "extra_headers": {},
+            "models": [
+                {
+                    "id": "llm-m",
+                    "name": "Gemini 3.5 Flash",
+                    "model": "google/gemini-3.5-flash",
+                }
+            ],
+        }
+    )
+
+    resolved = resolve_llm_runtime_config(catalog=catalog)
+
+    assert resolved.provider_name == "unifically"
+    assert resolved.provider_mode == "gateway"
+    assert resolved.binding == "unifically"
+    assert resolved.model == "google/gemini-3.5-flash"
+    assert resolved.api_key == "unifically-key"
+    assert resolved.effective_url == "https://api.unifically.com/v1"
+
+
+def test_llm_unifically_base_url_detection_preserves_openai_binding_compatibility() -> None:
+    catalog = _build_catalog(
+        llm_profile={
+            "id": "llm-p",
+            "name": "OpenAI Compatible",
+            "binding": "openai",
+            "base_url": "https://api.unifically.com/v1",
+            "api_key": "unifically-key",
+            "api_version": "",
+            "extra_headers": {},
+            "models": [{"id": "llm-m", "name": "Gemini", "model": "google/gemini-3.5-flash"}],
+        }
+    )
+
+    resolved = resolve_llm_runtime_config(catalog=catalog)
+
+    assert resolved.provider_name == "unifically"
+    assert resolved.provider_mode == "gateway"
+    assert resolved.effective_url == "https://api.unifically.com/v1"
+
+
+def test_llm_cheaperinference_binding_uses_default_openai_compatible_endpoint() -> None:
+    catalog = _build_catalog(
+        llm_profile={
+            "id": "llm-p",
+            "name": "Cheaper Inference",
+            "binding": "cheaperinference",
+            "base_url": "",
+            "api_key": "cheaperinference-key",
+            "api_version": "",
+            "extra_headers": {},
+            "models": [
+                {
+                    "id": "llm-m",
+                    "name": "GPT-5.4",
+                    "model": "gpt-5.4",
+                }
+            ],
+        }
+    )
+
+    resolved = resolve_llm_runtime_config(catalog=catalog)
+
+    assert resolved.provider_name == "cheaperinference"
+    assert resolved.provider_mode == "gateway"
+    assert resolved.binding == "cheaperinference"
+    assert resolved.model == "gpt-5.4"
+    assert resolved.api_key == "cheaperinference-key"
+    assert resolved.effective_url == "https://api.cheaperinference.com/v1"
+
+
+def test_llm_cheaperinference_base_url_detection_preserves_openai_binding_compatibility() -> None:
+    catalog = _build_catalog(
+        llm_profile={
+            "id": "llm-p",
+            "name": "OpenAI Compatible",
+            "binding": "openai",
+            "base_url": "https://api.cheaperinference.com/v1",
+            "api_key": "cheaperinference-key",
+            "api_version": "",
+            "extra_headers": {},
+            "models": [{"id": "llm-m", "name": "GPT", "model": "gpt-5.4-mini"}],
+        }
+    )
+
+    resolved = resolve_llm_runtime_config(catalog=catalog)
+
+    assert resolved.provider_name == "cheaperinference"
+    assert resolved.provider_mode == "gateway"
+    assert resolved.effective_url == "https://api.cheaperinference.com/v1"
+
+
+def test_llm_api_route_binding_uses_default_openai_compatible_endpoint() -> None:
+    catalog = _build_catalog(
+        llm_profile={
+            "id": "llm-p",
+            "name": "API Route",
+            "binding": "api_route",
+            "base_url": "",
+            "api_key": "api-route-key",
+            "api_version": "",
+            "extra_headers": {},
+            "models": [{"id": "llm-m", "name": "GPT", "model": "gpt-5.5"}],
+        }
+    )
+
+    resolved = resolve_llm_runtime_config(catalog=catalog)
+
+    assert resolved.provider_name == "api_route"
+    assert resolved.provider_mode == "gateway"
+    assert resolved.binding == "api_route"
+    assert resolved.model == "gpt-5.5"
+    assert resolved.api_key == "api-route-key"
+    assert resolved.effective_url == "https://global.api-route.com/v1"
+
+
+def test_llm_api_route_base_url_detection_preserves_openai_binding_compatibility() -> None:
+    catalog = _build_catalog(
+        llm_profile={
+            "id": "llm-p",
+            "name": "OpenAI Compatible",
+            "binding": "openai",
+            "base_url": "https://global.api-route.com/v1",
+            "api_key": "api-route-key",
+            "api_version": "",
+            "extra_headers": {},
+            "models": [{"id": "llm-m", "name": "GPT", "model": "gpt-5.5"}],
+        }
+    )
+
+    resolved = resolve_llm_runtime_config(catalog=catalog)
+
+    assert resolved.provider_name == "api_route"
+    assert resolved.provider_mode == "gateway"
+    assert resolved.effective_url == "https://global.api-route.com/v1"
+
+
+def test_llm_requesty_binding_uses_default_openai_compatible_endpoint() -> None:
+    catalog = _build_catalog(
+        llm_profile={
+            "id": "llm-p",
+            "name": "Requesty",
+            "binding": "requesty",
+            "base_url": "",
+            "api_key": "requesty-key",
+            "api_version": "",
+            "extra_headers": {},
+            "models": [
+                {
+                    "id": "llm-m",
+                    "name": "GPT-4o mini",
+                    "model": "openai/gpt-4o-mini",
+                }
+            ],
+        }
+    )
+
+    resolved = resolve_llm_runtime_config(catalog=catalog)
+
+    assert resolved.provider_name == "requesty"
+    assert resolved.provider_mode == "gateway"
+    assert resolved.binding == "requesty"
+    assert resolved.model == "openai/gpt-4o-mini"
+    assert resolved.api_key == "requesty-key"
+    assert resolved.effective_url == "https://router.requesty.ai/v1"
+
+
+def test_llm_requesty_base_url_detection_preserves_openai_binding_compatibility() -> None:
+    catalog = _build_catalog(
+        llm_profile={
+            "id": "llm-p",
+            "name": "OpenAI Compatible",
+            "binding": "openai",
+            "base_url": "https://router.eu.requesty.ai/v1",
+            "api_key": "requesty-key",
+            "api_version": "",
+            "extra_headers": {},
+            "models": [{"id": "llm-m", "name": "GPT", "model": "openai/gpt-5-mini"}],
+        }
+    )
+
+    resolved = resolve_llm_runtime_config(catalog=catalog)
+
+    assert resolved.provider_name == "requesty"
+    assert resolved.provider_mode == "gateway"
+    assert resolved.effective_url == "https://router.eu.requesty.ai/v1"
+
+
+def test_llm_futureinfra_binding_uses_default_openai_compatible_endpoint() -> None:
+    catalog = _build_catalog(
+        llm_profile={
+            "id": "llm-p",
+            "name": "FutureInfra",
+            "binding": "futureinfra",
+            "base_url": "",
+            "api_key": "futureinfra-key",
+            "api_version": "",
+            "extra_headers": {},
+            "models": [
+                {
+                    "id": "llm-m",
+                    "name": "GPT-4o mini",
+                    "model": "openai/gpt-4o-mini",
+                }
+            ],
+        }
+    )
+
+    resolved = resolve_llm_runtime_config(catalog=catalog)
+
+    assert resolved.provider_name == "futureinfra"
+    assert resolved.provider_mode == "gateway"
+    assert resolved.binding == "futureinfra"
+    assert resolved.model == "openai/gpt-4o-mini"
+    assert resolved.api_key == "futureinfra-key"
+    assert resolved.effective_url == "https://futureinfra.ai/v1/ai"
+
+
+def test_llm_futureinfra_base_url_detection_preserves_openai_binding_compatibility() -> None:
+    catalog = _build_catalog(
+        llm_profile={
+            "id": "llm-p",
+            "name": "OpenAI Compatible",
+            "binding": "openai",
+            "base_url": "https://futureinfra.ai/v1/ai",
+            "api_key": "futureinfra-key",
+            "api_version": "",
+            "extra_headers": {},
+            "models": [{"id": "llm-m", "name": "GPT", "model": "openai/gpt-4o-mini"}],
+        }
+    )
+
+    resolved = resolve_llm_runtime_config(catalog=catalog)
+
+    assert resolved.provider_name == "futureinfra"
+    assert resolved.provider_mode == "gateway"
+    assert resolved.effective_url == "https://futureinfra.ai/v1/ai"
+
+
 def test_llm_novita_binding_uses_default_openai_compatible_endpoint() -> None:
     catalog = _build_catalog(
         llm_profile={

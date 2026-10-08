@@ -6,6 +6,7 @@ Manages multiple knowledge bases and provides utilities for accessing them.
 """
 
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -15,6 +16,8 @@ from pathlib import Path
 import shutil
 import stat
 import sys
+from threading import RLock
+import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -56,12 +59,33 @@ from deeptutor.services.web_source.crawler import MAX_CRAWL_DEPTH, MAX_CRAWL_PAG
 logger = logging.getLogger(__name__)
 
 
+def _assert_move_id_available(base_dir: Path, name: str) -> None:
+    """Prevent a new registration from shadowing a saved moved-KB redirect."""
+    from deeptutor.services.workspace.knowledge import (
+        canonical_kb_id,
+        qualified_kb_id,
+        workspace_id_for_kb_base_dir,
+    )
+
+    workspace_id = workspace_id_for_kb_base_dir(base_dir)
+    if workspace_id is None:
+        # A manager targeting a partner's separate directory has no catalog ID.
+        return
+    resource_id = qualified_kb_id(name, workspace_id)
+    if canonical_kb_id(resource_id) != resource_id:
+        raise ValueError("This knowledge base ID is reserved by an earlier move.")
+
+
 # How long an entry can be missing its KB directory before ``list_knowledge_bases``
 # treats it as a stale orphan. The KB create flow writes the "initializing"
 # config entry before the on-disk folder is created, so a too-short grace would
 # let a list-call mid-creation racy-delete the entry. 60s is comfortably longer
 # than the create handshake while still keeping multi-day zombies out.
 _ORPHAN_PRUNE_GRACE_SECONDS = 60
+
+# External/manual index changes are re-probed within this interval (#1711).
+# Normal indexing writes kb_config.json, which invalidates the snapshot at once.
+_CATALOG_CACHE_SECONDS = 2.0
 
 
 def _entry_updated_after(kb_entry: dict | None, cutoff: datetime) -> bool:
@@ -307,6 +331,9 @@ class KnowledgeBaseManager:
 
         # Config file to track knowledge bases
         self.config_file = self.base_dir / "kb_config.json"
+        self._catalog_lock = RLock()
+        self._config_cache = None
+        self._info_cache: dict[tuple, tuple] = {}
         self.config = self._load_config()
 
         # PocketBase sync — enabled when integrations.pocketbase_url is set.
@@ -316,7 +343,42 @@ class KnowledgeBaseManager:
 
         self._pb_enabled = is_pocketbase_enabled()
 
+    def _catalog_revision(self) -> tuple:
+        from deeptutor.multi_user.context import get_current_user_or_none
+        from deeptutor.services.rag.embedding_signature import signature_from_embedding_config
+        from deeptutor.services.workspace.context import current_workspace_id
+
+        try:
+            stat_result = self.config_file.stat()
+            revision = (stat_result.st_ino, stat_result.st_mtime_ns, stat_result.st_size)
+        except FileNotFoundError:
+            revision = None
+        signature = signature_from_embedding_config()
+        user = get_current_user_or_none()
+        return (
+            revision,
+            signature.hash() if signature is not None else None,
+            user.id if user is not None else None,
+            current_workspace_id(),
+        )
+
     def _load_config(self) -> dict:
+        # The registry is atomic; one stat detects writes by other processes.
+        # Single-flight the expensive reconciliation on slow volumes (#1711).
+        with self._catalog_lock:
+            revision = self._catalog_revision()
+            cached = self._config_cache
+            if cached and cached[0] == revision and time.monotonic() < cached[1]:
+                return deepcopy(cached[2])
+            config = self._read_and_reconcile_config()
+            self._config_cache = (
+                self._catalog_revision(),
+                time.monotonic() + _CATALOG_CACHE_SECONDS,
+                deepcopy(config),
+            )
+            return config
+
+    def _read_and_reconcile_config(self) -> dict:
         """Load knowledge base configuration from the canonical kb_config.json file."""
         if self.config_file.exists():
             try:
@@ -404,7 +466,10 @@ class KnowledgeBaseManager:
         ever see the previous or the new file — ``open(..., "w")`` used to
         truncate the config before the lock was even acquired.
         """
-        atomic_write_json(self.config_file, self.config)
+        with self._catalog_lock:
+            atomic_write_json(self.config_file, self.config)
+            self._config_cache = None
+            self._info_cache.clear()
 
     def _sync_kb_to_pb(self, name: str, kb_entry: dict) -> None:
         """
@@ -578,6 +643,10 @@ class KnowledgeBaseManager:
         }
 
     def list_knowledge_bases(self) -> list[str]:
+        with self._catalog_lock:
+            return self._list_knowledge_bases()
+
+    def _list_knowledge_bases(self) -> list[str]:
         """List all available knowledge bases.
 
         This method:
@@ -739,6 +808,7 @@ class KnowledgeBaseManager:
     def register_knowledge_base(self, name: str, description: str = "", set_default: bool = False):
         """Register a knowledge base"""
         name = validate_knowledge_base_name(name)
+        _assert_move_id_available(self.base_dir, name)
         kb_dir = self.base_dir / name
         if not kb_dir.exists():
             raise ValueError(f"Knowledge base directory does not exist: {kb_dir}")
@@ -771,6 +841,7 @@ class KnowledgeBaseManager:
             raise ValueError("Knowledge base name is required.")
         if not is_connected_kb(entry):
             raise ValueError(f"Not a connected knowledge base entry: {name}")
+        _assert_move_id_available(self.base_dir, name)
 
         self.config = self._load_config()
         knowledge_bases = self.config.setdefault("knowledge_bases", {})
@@ -789,6 +860,7 @@ class KnowledgeBaseManager:
         live. Raises ``ValueError`` on a missing/invalid path or a name clash.
         """
         name = validate_knowledge_base_name(name)
+        _assert_move_id_available(self.base_dir, name)
         vault = Path(vault_path).expanduser()
         if not vault.is_dir():
             raise ValueError(f"Vault path is not a directory: {vault_path}")
@@ -832,6 +904,7 @@ class KnowledgeBaseManager:
         Raises ``ValueError`` on a missing/invalid path or a name clash.
         """
         name = validate_knowledge_base_name(name)
+        _assert_move_id_available(self.base_dir, name)
         provider = normalize_provider_name(provider)
         folder = Path(external_path).expanduser()
         if not folder.is_dir():
@@ -874,6 +947,7 @@ class KnowledgeBaseManager:
     ) -> dict:
         """Register a local or remote agent connection without creating an index."""
         name = validate_knowledge_base_name(name)
+        _assert_move_id_available(self.base_dir, name)
         agent_kind = (agent_kind or "").strip()
         if agent_kind == "partner":
             raise ValueError("Select partners directly through Ask partner instead.")
@@ -926,6 +1000,7 @@ class KnowledgeBaseManager:
         name clash.
         """
         name = validate_knowledge_base_name(name)
+        _assert_move_id_available(self.base_dir, name)
         server_url = (server_url or "").strip().rstrip("/")
         if not server_url:
             raise ValueError("LightRAG server URL is required.")
@@ -973,6 +1048,7 @@ class KnowledgeBaseManager:
         claimed by another library.
         """
         name = validate_knowledge_base_name(name)
+        _assert_move_id_available(self.base_dir, name)
 
         self.config = self._load_config()
         knowledge_bases = self.config.setdefault("knowledge_bases", {})
@@ -1052,6 +1128,7 @@ class KnowledgeBaseManager:
         or a name clash.
         """
         name = validate_knowledge_base_name(name)
+        _assert_move_id_available(self.base_dir, name)
         client_id = (client_id or "").strip()
         api_key = (api_key or "").strip()
         knowledge_base_id = (knowledge_base_id or "").strip()
@@ -1095,6 +1172,7 @@ class KnowledgeBaseManager:
     ) -> dict:
         """Register a self-hosted WeKnora knowledge base as a pointer KB."""
         name = validate_knowledge_base_name(name)
+        _assert_move_id_available(self.base_dir, name)
         server_url = (server_url or "").strip().rstrip("/")
         api_key = (api_key or "").strip()
         knowledge_base_id = (knowledge_base_id or "").strip()
@@ -1123,6 +1201,46 @@ class KnowledgeBaseManager:
             "updated_at": now,
         }
         knowledge_bases[name] = entry
+        self._save_config()
+        return entry
+
+    def register_kiwix_kb(
+        self,
+        name: str,
+        server_url: str,
+        zim_name: str,
+        *,
+        zim_title: str = "",
+    ) -> dict:
+        """Register a read-only pointer to one ZIM already served by Kiwix."""
+        from deeptutor.knowledge.kb_types import KIWIX_KB_TYPE
+        from deeptutor.services.rag.pipelines.kiwix.client import (
+            normalize_base_url,
+            validate_zim_name,
+        )
+
+        name = validate_knowledge_base_name(name)
+        server_url = normalize_base_url(server_url)
+        zim_name = validate_zim_name(zim_name)
+        self.config = self._load_config()
+        bases = self.config.setdefault("knowledge_bases", {})
+        if name in bases:
+            raise ValueError(f"A knowledge base named '{name}' already exists.")
+        now = datetime.now().isoformat()
+        entry = {
+            "path": name,
+            "type": KIWIX_KB_TYPE,
+            "rag_provider": KIWIX_KB_TYPE,
+            "server_url": server_url,
+            "zim_name": zim_name,
+            "zim_title": zim_title[:300],
+            "description": f"Kiwix archive: {zim_title or zim_name}",
+            "status": "ready",
+            "needs_reindex": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+        bases[name] = entry
         self._save_config()
         return entry
 
@@ -1284,6 +1402,8 @@ class KnowledgeBaseManager:
                 # LightRAG server pointer (the URL is safe to surface; the API
                 # key deliberately is not).
                 "server_url": kb_config.get("server_url"),
+                "zim_name": kb_config.get("zim_name"),
+                "zim_title": kb_config.get("zim_title"),
                 # IMA pointer. The library id identifies which IMA knowledge
                 # base this KB reads; the client id and API key are credentials
                 # and are deliberately absent from this allowlist.
@@ -1301,6 +1421,39 @@ class KnowledgeBaseManager:
         return {}
 
     def get_info(
+        self,
+        name: str | None = None,
+        *,
+        refresh_config: bool = True,
+        default_name: str | None = None,
+    ) -> dict:
+        if refresh_config:
+            return self._get_info(name, default_name=default_name)
+        with self._catalog_lock:
+            key = (name, default_name)
+            revision = (
+                self._catalog_revision(),
+                json.dumps(
+                    self.config.get("knowledge_bases", {}).get(name or default_name, {}),
+                    sort_keys=True,
+                    default=str,
+                ),
+            )
+            cached = self._info_cache.get(key)
+            if cached and cached[0] == revision and time.monotonic() < cached[1]:
+                return deepcopy(cached[2])
+            info = self._get_info(name, refresh_config=False, default_name=default_name)
+            # Keep only the current catalog's entries, including connected KBs.
+            if len(self._info_cache) >= max(1, len(self.config.get("knowledge_bases", {})) * 2):
+                self._info_cache.clear()
+            self._info_cache[key] = (
+                revision,
+                time.monotonic() + _CATALOG_CACHE_SECONDS,
+                deepcopy(info),
+            )
+            return info
+
+    def _get_info(
         self,
         name: str | None = None,
         *,
@@ -1446,6 +1599,9 @@ class KnowledgeBaseManager:
         # Same split for IMA: the library id is shown, the credentials are not.
         if kb_config.get("knowledge_base_id"):
             metadata["knowledge_base_id"] = kb_config.get("knowledge_base_id")
+        if kb_config.get("zim_name"):
+            metadata["zim_name"] = kb_config.get("zim_name")
+            metadata["zim_title"] = kb_config.get("zim_title") or ""
 
         if rag_provider == LIGHTRAG_PROVIDER:
             from deeptutor.services.rag.pipelines.lightrag.storage import (
@@ -1853,6 +2009,7 @@ class KnowledgeBaseManager:
             "path": str(folder),
             "added_at": datetime.now().isoformat(),
             "file_count": len(files),
+            "last_sync": None,
         }
         metadata["linked_folders"].append(folder_info)
 
@@ -2002,7 +2159,13 @@ class KnowledgeBaseManager:
             "modified_count": len(modified_files),
         }
 
-    def update_folder_sync_state(self, kb_name: str, folder_id: str, synced_files: list[str]):
+    def update_folder_sync_state(
+        self,
+        kb_name: str,
+        folder_id: str,
+        synced_files: list[str],
+        source_mtimes: dict[str, str] | None = None,
+    ):
         """
         Update the sync state for a linked folder after successful sync.
 
@@ -2013,6 +2176,7 @@ class KnowledgeBaseManager:
             kb_name: Knowledge base name
             folder_id: Folder ID
             synced_files: List of file paths that were successfully synced
+            source_mtimes: Modification times captured before source staging.
         """
         if kb_name not in self.list_knowledge_bases():
             raise ValueError(f"Knowledge base not found: {kb_name}")
@@ -2040,10 +2204,14 @@ class KnowledgeBaseManager:
                 file_states = folder.get("synced_files", {})
                 for file_path in synced_files:
                     try:
-                        p = Path(file_path)
-                        if p.exists():
-                            mtime = datetime.fromtimestamp(p.stat().st_mtime)
-                            file_states[file_path] = mtime.isoformat()
+                        if source_mtimes is not None:
+                            if file_path in source_mtimes:
+                                file_states[file_path] = source_mtimes[file_path]
+                        else:
+                            p = Path(file_path)
+                            if p.exists():
+                                mtime = datetime.fromtimestamp(p.stat().st_mtime)
+                                file_states[file_path] = mtime.isoformat()
                     except Exception:
                         pass
 
@@ -2176,6 +2344,8 @@ class KnowledgeBaseManager:
             "max_depth": max_depth,
             "max_pages": max_pages,
             "enabled": True,
+            "auto_sync_enabled": True,
+            "sync_interval_hours": 24,
             "page_hashes": {},
             "page_count": 0,
             "last_synced_at": "",
@@ -2222,6 +2392,29 @@ class KnowledgeBaseManager:
                 source.update(fields)
                 atomic_write_json(metadata_file, metadata)
                 return
+
+    def update_web_source_schedule(
+        self,
+        kb_name: str,
+        source_id: str,
+        *,
+        auto_sync_enabled: bool,
+        sync_interval_hours: int,
+    ) -> dict:
+        """Persist the reviewable schedule fields for one web source."""
+        source = next(
+            (item for item in self.get_web_sources(kb_name) if item.get("id") == source_id),
+            None,
+        )
+        if source is None:
+            raise ValueError(f"Source '{source_id}' not found")
+        self.update_web_source_state(
+            kb_name,
+            source_id,
+            auto_sync_enabled=auto_sync_enabled,
+            sync_interval_hours=sync_interval_hours,
+        )
+        return next(item for item in self.get_web_sources(kb_name) if item.get("id") == source_id)
 
     def get_all_web_sources(self) -> list[tuple[str, dict]]:
         """Scan every KB and return (kb_name, source_dict) pairs."""

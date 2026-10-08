@@ -6,6 +6,7 @@ import type { EmbeddingModelSelection } from "@/features/knowledge/model/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   connectImaKnowledgeBase as connectImaApi,
+  connectKiwix as connectKiwixApi,
   connectWeKnora as connectWeKnoraApi,
   connectLinkedFolder as connectLinkedFolderApi,
   connectMarginNote4Library as connectMarginNote4Api,
@@ -25,6 +26,15 @@ import {
 } from "@/features/knowledge/api/catalog";
 import { connectLightRagServer as connectLightRagServerApi } from "@/features/knowledge/api/engines";
 import { uploadKnowledgeBaseFiles as uploadKbApi } from "@/features/knowledge/api/files";
+import {
+  linkFolder as linkFolderApi,
+  syncLinkedFolder as syncLinkedFolderApi,
+  unlinkFolder as unlinkFolderApi,
+} from "@/features/knowledge/api/folders";
+import type {
+  LinkedFolderInfo,
+  SyncFolderResponse,
+} from "@/features/knowledge/model/types";
 import {
   DEFAULT_UPLOAD_POLICY,
   type KnowledgeBase,
@@ -186,6 +196,7 @@ export function useKnowledgeBases() {
       name: string;
       provider: string;
       files: File[];
+      storageWorkspaceId?: string;
       pageindexMode?: "flash" | "standard";
       searchMode?: string;
       embeddingModel?: EmbeddingModelSelection;
@@ -195,7 +206,7 @@ export function useKnowledgeBases() {
       const fileCount = params.files.length;
       if (result.task_id) {
         progress.startTask({
-          kbName: params.name,
+          kbName: result.id || params.name,
           taskId: result.task_id,
           kind: "create",
           label: `Create ${params.name}`,
@@ -347,6 +358,54 @@ export function useKnowledgeBases() {
     [load],
   );
 
+  const linkFolder = useCallback(
+    async (kbName: string, folderPath: string): Promise<LinkedFolderInfo> => {
+      const result = await linkFolderApi(kbName, folderPath);
+      invalidateKnowledgeCaches();
+      await load({ force: true, showSpinner: false });
+      return result;
+    },
+    [load],
+  );
+
+  const unlinkFolder = useCallback(
+    async (kbName: string, folderId: string): Promise<void> => {
+      await unlinkFolderApi(kbName, folderId);
+      invalidateKnowledgeCaches();
+      await load({ force: true, showSpinner: false });
+    },
+    [load],
+  );
+
+  const syncLinkedFolder = useCallback(
+    async (kbName: string, folderId: string): Promise<SyncFolderResponse> => {
+      const result = await syncLinkedFolderApi(kbName, folderId);
+      if (result.task_id) {
+        progress.startTask({
+          kbName,
+          taskId: result.task_id,
+          kind: "sync",
+          label: "Sync linked folder",
+          initialLogs: [
+            "Queued linked-folder sync.",
+            "Waiting for backend indexing logs...",
+          ],
+          seed: {
+            stage: "starting",
+            message: result.message,
+            current: 0,
+            total: result.file_count,
+            progress_percent: 0,
+          },
+        });
+      }
+      invalidateKnowledgeCaches();
+      await load({ force: true, showSpinner: false });
+      return result;
+    },
+    [load, progress],
+  );
+
   const connectLightRagServer = useCallback(
     async (params: {
       name: string;
@@ -398,6 +457,15 @@ export function useKnowledgeBases() {
     [load],
   );
 
+  const connectKiwix = useCallback(
+    async (params: { name: string; serverUrl: string; zimName: string }) => {
+      await connectKiwixApi(params);
+      invalidateKnowledgeCaches();
+      await load({ force: true, showSpinner: false });
+    },
+    [load],
+  );
+
   return {
     kbs: combinedKbs,
     rawKbs: kbs,
@@ -420,10 +488,14 @@ export function useKnowledgeBases() {
     deleteKb,
     connectObsidian,
     connectLinkedFolder,
+    linkFolder,
+    unlinkFolder,
+    syncLinkedFolder,
     connectLightRagServer,
     connectWeKnora,
     connectMarginNote4,
     connectIma,
+    connectKiwix,
   };
 }
 

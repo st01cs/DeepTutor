@@ -9,15 +9,20 @@ isolated chat-format workspace under ``data/partners/{partner_id}/``.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+import errno
 import hashlib
 import logging
 import os
 from pathlib import Path
 import re
 import shutil
-from typing import Any, Awaitable, Callable
+import sys
+import time
+from typing import Any, Awaitable, BinaryIO, Callable, Iterator
 
 import yaml
 
@@ -43,6 +48,75 @@ from deeptutor.services.partners.workspace import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The outbound lane is serial, so a message that waited this long behind others
+# is what a reader experiences as "the answer arrives long after the turn".
+_OUTBOUND_LAG_WARN_SECONDS = 2.0
+_OUTBOUND_SEND_WARN_SECONDS = 5.0
+
+
+def _send_max_retries(channel_manager: Any) -> int:
+    """Retry budget for ordinary outbound messages on this partner's channels."""
+    configured = getattr(getattr(channel_manager, "channels_config", None), "send_max_retries", 3)
+    try:
+        return max(int(configured), 1)
+    except (TypeError, ValueError):
+        return 3
+
+
+class PartnerTurnBusyError(RuntimeError):
+    """A new message cannot take over an in-flight web conversation."""
+
+
+class PartnerStaleSessionError(RuntimeError):
+    """A browser submitted a key that is no longer selected for its account."""
+
+    def __init__(self, active_session_key: str) -> None:
+        super().__init__("The active conversation changed in another browser.")
+        self.active_session_key = active_session_key
+
+
+def _acquire_web_turn_lock(path: Path) -> BinaryIO:
+    """Hold a per-session process lock for the full streamed web turn."""
+    handle = path.open("a+b")
+    try:
+        handle.seek(0, 2)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if sys.platform == "win32":  # pragma: no cover - Windows only
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return handle
+    except OSError as exc:
+        handle.close()
+        if exc.errno in {errno.EACCES, errno.EAGAIN}:
+            raise PartnerTurnBusyError(
+                "This conversation is already replying. Please wait."
+            ) from exc
+        raise
+
+
+def _release_web_turn_lock(handle: BinaryIO) -> None:
+    try:
+        handle.seek(0)
+        if sys.platform == "win32":  # pragma: no cover - Windows only
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
 
 _RESERVED_NAMES = {"workspace", "media", "sessions", "_souls"}
 _HYPHEN_RUN_RE = re.compile(r"-+")
@@ -247,6 +321,7 @@ class LiveTurn:
     done: bool = False
     subscribers: set[asyncio.Queue] = field(default_factory=set, repr=False)
     task: asyncio.Task | None = field(default=None, repr=False)
+    turn_lock: BinaryIO | None = field(default=None, repr=False)
 
     def emit(self, frame: dict[str, Any]) -> None:
         self.events.append(frame)
@@ -260,6 +335,10 @@ class LiveTurn:
             for frame in frames:
                 queue.put_nowait(frame)
         self.subscribers.clear()
+        if self.turn_lock is not None:
+            handle = self.turn_lock
+            self.turn_lock = None
+            _release_web_turn_lock(handle)
 
     def subscribe(self) -> asyncio.Queue:
         """Preload the backlog and register — atomically (no await between) so
@@ -679,53 +758,133 @@ class PartnerManager:
         return instance
 
     async def _outbound_router(self, partner_id: str, bus: Any, instance: PartnerInstance) -> None:
-        """Route outbound messages to channels, the WebUI feed, and EventBus."""
-        try:
-            from deeptutor.events.event_bus import Event, EventType, get_event_bus
-            from deeptutor.partners.bus.events import OutboundMessage as _OMsg
+        """Route outbound messages to channels, the WebUI feed, and EventBus.
 
+        This is the partner's only outbound lane, and every channel delivery is
+        one blocking HTTP round trip. Left unmerged, a fast model fills the
+        queue faster than Feishu/Telegram can post, so the reply kept arriving
+        long after the turn had finished. Consecutive stream deltas of one
+        segment (and queued narration/tool-hint progress) are therefore merged
+        before delivery — the same contract the channel dispatcher applies — and
+        ordinary messages retry with backoff.
+        """
+        from deeptutor.events.event_bus import Event, EventType, get_event_bus
+        from deeptutor.partners.bus.events import OutboundMessage as _OMsg
+        from deeptutor.partners.channels.manager import (
+            coalesce_progress_messages,
+            coalesce_stream_deltas,
+            send_with_retry,
+        )
+
+        pending: deque[_OMsg] = deque()
+        msg: _OMsg
+
+        try:
             event_bus = get_event_bus()
             while True:
-                msg: _OMsg = await bus.consume_outbound()
-                is_progress = bool(msg.metadata and msg.metadata.get("_progress"))
+                if pending:
+                    msg = pending.popleft()
+                else:
+                    msg = await bus.consume_outbound()
 
-                if instance.channel_manager:
-                    channel = instance.channel_manager.get_channel(msg.channel)
-                    if channel:
-                        try:
-                            await channel.send(msg)
-                        except Exception:
-                            logger.exception(
-                                "Failed to send to channel %s for partner %s",
-                                msg.channel,
-                                partner_id,
+                metadata = msg.metadata or {}
+                if metadata.get("_stream_delta") and not metadata.get("_stream_end"):
+                    msg, extra = coalesce_stream_deltas(bus, msg)
+                    pending.extend(extra)
+                    metadata = msg.metadata or {}
+                elif metadata.get("_progress"):
+                    msg, extra = coalesce_progress_messages(bus, msg)
+                    pending.extend(extra)
+                    metadata = msg.metadata or {}
+                is_stream = bool(metadata.get("_stream_delta") or metadata.get("_stream_end"))
+                is_progress = bool(metadata.get("_progress") or is_stream)
+
+                # One bad message must not kill the lane for the whole partner.
+                try:
+                    # A channel reload swaps the manager, so re-read it per
+                    # message instead of pinning the one this task started with.
+                    channel_manager = instance.channel_manager
+                    if channel_manager:
+                        channel = channel_manager.get_channel(msg.channel)
+                        if channel:
+                            # Stream frames self-heal (the next update carries
+                            # the full text), so a failed one must not hold the
+                            # lane behind backoff sleeps.
+                            queued_at = metadata.get("_enqueued_at")
+                            started = time.monotonic()
+                            await send_with_retry(
+                                channel,
+                                msg,
+                                max_attempts=(
+                                    1 if is_stream else _send_max_retries(channel_manager)
+                                ),
                             )
-                        if not is_progress and msg.chat_id:
-                            instance.channel_bindings[msg.channel] = msg.chat_id
+                            waited = started - queued_at if isinstance(queued_at, float) else 0.0
+                            delivered_in = time.monotonic() - started
+                            if waited >= _OUTBOUND_LAG_WARN_SECONDS:
+                                logger.warning(
+                                    "Outbound backlog for partner %s on %s: message waited %.1fs "
+                                    "in the queue (%s, %d chars)",
+                                    partner_id,
+                                    msg.channel,
+                                    waited,
+                                    "stream" if is_stream else "message",
+                                    len(msg.content or ""),
+                                )
+                            elif delivered_in >= _OUTBOUND_SEND_WARN_SECONDS:
+                                logger.warning(
+                                    "Slow outbound send for partner %s on %s: %.1fs (%s, %d chars)",
+                                    partner_id,
+                                    msg.channel,
+                                    delivered_in,
+                                    "stream" if is_stream else "message",
+                                    len(msg.content or ""),
+                                )
+                            else:
+                                logger.debug(
+                                    "Outbound %s to %s for partner %s delivered in %.2fs "
+                                    "(queue %.2fs, %d chars)",
+                                    "stream" if is_stream else "message",
+                                    msg.channel,
+                                    partner_id,
+                                    delivered_in,
+                                    waited,
+                                    len(msg.content or ""),
+                                )
+                            if not is_progress and msg.chat_id:
+                                instance.channel_bindings[msg.channel] = msg.chat_id
 
-                if not is_progress:
-                    # Normal channel turns are already mirrored with their user
-                    # bubble and full StreamEvent trace by PartnerRunner. Keep a
-                    # final-only proactive frame only for direct producers such
-                    # as cron jobs that bypass the inbound channel loop.
-                    if not (msg.metadata or {}).get("_web_activity_mirrored"):
-                        instance.activity_feed.publish(
-                            None,
-                            {"type": "proactive", "content": msg.content or ""},
+                    if not is_progress:
+                        # Normal channel turns are already mirrored with their
+                        # user bubble and full StreamEvent trace by PartnerRunner.
+                        # Keep a final-only proactive frame only for direct
+                        # producers such as cron jobs that bypass the inbound loop.
+                        if not (msg.metadata or {}).get("_web_activity_mirrored"):
+                            instance.activity_feed.publish(
+                                None,
+                                {"type": "proactive", "content": msg.content or ""},
+                            )
+                        await event_bus.publish(
+                            Event(
+                                type=EventType.CAPABILITY_COMPLETE,
+                                task_id=f"partner:{partner_id}:{msg.channel}:{msg.chat_id}",
+                                user_input="",
+                                agent_output=msg.content or "",
+                                metadata={
+                                    "source": "partner",
+                                    "partner_id": partner_id,
+                                    "channel": msg.channel,
+                                    "chat_id": msg.chat_id,
+                                },
+                            )
                         )
-                    await event_bus.publish(
-                        Event(
-                            type=EventType.CAPABILITY_COMPLETE,
-                            task_id=f"partner:{partner_id}:{msg.channel}:{msg.chat_id}",
-                            user_input="",
-                            agent_output=msg.content or "",
-                            metadata={
-                                "source": "partner",
-                                "partner_id": partner_id,
-                                "channel": msg.channel,
-                                "chat_id": msg.chat_id,
-                            },
-                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Failed to deliver outbound message to %s for partner %s",
+                        msg.channel,
+                        partner_id,
                     )
         except asyncio.CancelledError:
             return
@@ -1124,25 +1283,67 @@ class PartnerManager:
         session_key: str,
         content: str,
         media: list[str] | None = None,
+        *,
+        account_id: str | None = None,
     ) -> "LiveTurn":
-        """Run a web turn as an instance-owned task and return its LiveTurn.
+        """Run a new web turn, rejecting concurrent sends on the same session.
 
-        If a turn is already in flight for this session, returns it (one at a
-        time per session). The turn keeps running even if every socket detaches.
+        Reconnects use :meth:`subscribe_web_turn`; a fresh send must never
+        receive another browser's answer as if it were its own.
         """
         instance = self._partners.get(partner_id)
         if not instance or not instance.running or not instance.runner:
             raise RuntimeError(f"Partner '{partner_id}' is not running")
         existing = instance.live_turns.get(session_key)
         if existing is not None and not existing.done:
-            return existing
-        turn = LiveTurn(user_content=content)
+            raise PartnerTurnBusyError("This conversation is already replying. Please wait.")
+        lock_path = self.web_turn_lock_path(partner_id, session_key)
+        turn_lock = _acquire_web_turn_lock(lock_path)
+        try:
+            if account_id is not None:
+                from deeptutor.services.partners.web_continuity import (
+                    get_web_continuity,
+                    validate_session_key,
+                )
+
+                state = get_web_continuity(partner_id, account_id)
+                if state["enabled"] and state["session_key"] != validate_session_key(session_key):
+                    raise PartnerStaleSessionError(str(state["session_key"]))
+        except Exception:
+            _release_web_turn_lock(turn_lock)
+            raise
+        turn = LiveTurn(user_content=content, turn_lock=turn_lock)
         instance.live_turns[session_key] = turn
-        turn.task = asyncio.create_task(
-            self._drive_web_turn(partner_id, session_key, content, media or [], turn),
-            name=f"partner:{partner_id}:webturn",
-        )
+        try:
+            turn.task = asyncio.create_task(
+                self._drive_web_turn(partner_id, session_key, content, media or [], turn),
+                name=f"partner:{partner_id}:webturn",
+            )
+        except Exception:
+            turn.finish([])
+            instance.live_turns.pop(session_key, None)
+            raise
         return turn
+
+    def web_turn_lock_path(self, partner_id: str, session_key: str) -> Path:
+        return self.session_store(partner_id)._path(session_key).with_suffix(".turn.lock")
+
+    @contextmanager
+    def web_session_idle_lock(self, partner_id: str, session_key: str) -> Iterator[None]:
+        """Exclude in-flight turns while changing or deleting their session."""
+        handle = _acquire_web_turn_lock(self.web_turn_lock_path(partner_id, session_key))
+        try:
+            yield
+        finally:
+            _release_web_turn_lock(handle)
+
+    def web_session_is_busy(self, partner_id: str, session_key: str) -> bool:
+        """Detect a turn owned by this or another backend worker."""
+        try:
+            with self.web_session_idle_lock(partner_id, session_key):
+                return False
+        except PartnerTurnBusyError:
+            return True
 
     def subscribe_web_turn(self, partner_id: str, session_key: str) -> "LiveTurn | None":
         """The in-flight turn for a session, or None (completed turns are read

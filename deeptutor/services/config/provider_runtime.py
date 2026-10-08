@@ -31,6 +31,7 @@ from deeptutor.services.voice.config import (
     STT_MULTIPART,
     STTConfig,
     TTSConfig,
+    resolve_tts_request_timeout,
 )
 
 from .embedding_endpoint import (
@@ -223,6 +224,13 @@ EMBEDDING_PROVIDERS: dict[str, EmbeddingProviderSpec] = {
         keywords=("vllm", "lmstudio"),
         is_local=True,
     ),
+    "lemonade": EmbeddingProviderSpec(
+        label="Lemonade Server",
+        mode="local",
+        default_api_base=EMBEDDING_PROVIDER_DEFAULT_ENDPOINTS["lemonade"],
+        keywords=("lemonade",),
+        is_local=True,
+    ),
     "siliconflow": EmbeddingProviderSpec(
         label="SiliconFlow",
         adapter="openai_compat",
@@ -312,6 +320,20 @@ class VoiceProviderSpec:
 # Voice providers either use the shared OpenAI-compatible adapter or a native
 # protocol adapter registered by name (DashScope and Volcengine Speech TTS/STT).
 TTS_PROVIDERS: dict[str, VoiceProviderSpec] = {
+    "xiaomi_mimo": VoiceProviderSpec(
+        label="Xiaomi MiMo",
+        default_api_base="https://api.xiaomimimo.com/v1",
+        adapter="mimo_tts",
+        default_model="mimo-v2.5-tts",
+        default_voice="mimo_default",
+    ),
+    "minimax": VoiceProviderSpec(
+        label="MiniMax",
+        default_api_base="https://api.minimax.io/v1",
+        adapter="minimax",
+        default_model="speech-2.8-hd",
+        default_voice="English_expressive_narrator",
+    ),
     "volcengine_speech": VoiceProviderSpec(
         label="Volcengine Speech (Doubao)",
         default_api_base="https://openspeech.bytedance.com/api/v3",
@@ -380,11 +402,14 @@ STT_PROVIDERS: dict[str, VoiceProviderSpec] = {
         adapter="volcengine",
         default_model="bigmodel",
     ),
+    # DashScope's native adapter speaks the Paraformer real-time WebSocket API,
+    # which only accepts `paraformer-realtime-*` ids. `paraformer-v2` is a batch
+    # transcription id and the handshake fails with "Model not found".
     "dashscope": VoiceProviderSpec(
         label="Aliyun DashScope",
         default_api_base="https://dashscope.aliyuncs.com/api/v1",
         adapter="dashscope",
-        default_model="paraformer-v2",
+        default_model="paraformer-realtime-v2",
     ),
     "openai": VoiceProviderSpec(
         label="OpenAI",
@@ -1018,6 +1043,25 @@ def _resolve_embedding_provider(
     api_base: str | None,
     provider_pool: dict[str, NormalizedProviderConfig],
 ) -> str:
+    if api_base:
+        # Older keyless Lemonade profiles were saved as generic OpenAI
+        # Compatible embeddings. Recognize its known endpoint before a Qwen3
+        # model name is mistaken for a remote embedding vendor (#1568).
+        try:
+            endpoint = urlparse(api_base if "://" in api_base else f"http://{api_base}")
+            lemonade_endpoint = (
+                endpoint.port == 13305
+                and endpoint.path.rstrip("/").endswith(("/v1/embeddings", "/api/v1/embeddings"))
+                and (
+                    (endpoint.hostname or "").lower()
+                    in {"localhost", "127.0.0.1", "::1", "lemonade"}
+                    or (endpoint.hostname or "").lower().endswith(".local")
+                )
+            )
+        except ValueError:
+            lemonade_endpoint = False
+        if lemonade_endpoint and hint in {None, "custom", "openai"}:
+            return "lemonade"
     if hint and hint in EMBEDDING_PROVIDERS:
         return hint
 
@@ -1059,7 +1103,7 @@ def resolve_embedding_runtime_config(
     resolved_model = _as_str((model or {}).get("model"))
     if not resolved_model:
         raise ValueError(
-            "No active embedding model is configured. Please set it in Settings > Catalog."
+            "No active embedding model is configured. Set it in Settings > Embedding models."
         )
 
     binding_hint_raw = _as_str((profile or {}).get("binding"))
@@ -1161,12 +1205,15 @@ def resolve_tts_runtime_config(
     api_key = _as_str((profile or {}).get("api_key"))
     if not api_key and spec.is_local:
         api_key = "sk-no-key-required"
-    from deeptutor.services.voice.options import voice_model_options
+    from deeptutor.services.voice.options import is_qwen_audio_tts, voice_model_options
 
     options = voice_model_options(provider, "tts", resolved_model)
-    voice = _as_str((model or {}).get("voice")) or (
-        options["voices"][0]["id"] if options["voices"] else spec.default_voice
-    )
+    default_voice = spec.default_voice
+    if options["voices"]:
+        default_voice = options["voices"][0]["id"]
+    elif provider == "dashscope" and is_qwen_audio_tts(resolved_model):
+        default_voice = ""
+    voice = _as_str((model or {}).get("voice")) or default_voice
     response_format = _as_str((model or {}).get("response_format")) or options["formats"][0]
     raw_speed = (model or {}).get("speed")
     speed = _coerce_optional_float(raw_speed)
@@ -1194,6 +1241,7 @@ def resolve_tts_runtime_config(
         sample_rate=int((model or {}).get("sample_rate") or 24000),
         instructions=_as_str((model or {}).get("instructions")),
         max_input_chars=options.get("max_input_chars", 4096),
+        request_timeout=resolve_tts_request_timeout((model or {}).get("request_timeout")),
     )
 
 

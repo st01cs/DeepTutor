@@ -15,6 +15,27 @@ from deeptutor.services.workspace.models import WorkspaceError
 from tests.services.workspace.test_data_scope import account as account
 
 
+def test_task_board_export_and_migration_preserve_archived_cards(account):
+    from deeptutor.services.task_board import CreateCard, UpdateCard, get_task_board_store
+    from deeptutor.services.workspace.data_migration import export_path
+
+    target = account.create_workspace("Destination")["workspace_id"]
+    with workspace_context():
+        store = get_task_board_store()
+        card = store.create(CreateCard(title="Review examples")).cards[0]
+        expected = store.update(card.id, UpdateCard(status="done", archived=True))
+    feature = next(row for row in discover()["features"] if row["feature"] == "task-board")
+    assert not feature["error"]
+    exported = export_data("", ["task-board"])
+    with zipfile.ZipFile(export_path(exported["id"])) as archive:
+        assert any(name.endswith("cards.sqlite") for name in archive.namelist())
+    assert migrate_data("", target, ["task-board"])["status"] == "completed"
+    with workspace_context(target):
+        assert get_task_board_store().read() == expected
+    with workspace_context():
+        assert get_task_board_store().read().cards == []
+
+
 @pytest.mark.asyncio
 async def test_migration_keeps_messages_branches_questions_and_source_backup(account):
     target = account.create_workspace("Destination")["workspace_id"]
@@ -311,6 +332,45 @@ async def test_custom_attachment_root_moves_original_files(account, monkeypatch,
             session_id=session["id"], attachment_id="doc", filename="notes.txt"
         )
         assert path.read_bytes() == b"original"
+
+
+@pytest.mark.asyncio
+async def test_moving_chat_moves_legacy_attachment_into_selected_workspace(account):
+    from deeptutor.services.storage.attachment_store import (
+        _legacy_attachment_root,
+        get_attachment_store,
+    )
+    from deeptutor.services.workspace.session_move import move_chat
+
+    target = account.create_workspace("Destination")["workspace_id"]
+    with workspace_context():
+        session = await get_sqlite_session_store().create_session()
+        legacy = _legacy_attachment_root() / session["id"] / "doc_notes.txt"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_bytes(b"old upload")
+        await get_sqlite_session_store().add_message(
+            session["id"], "user", "/files/attachments/{}/doc/notes.txt".format(session["id"])
+        )
+        move_chat(session["id"], target)
+        assert not legacy.exists()
+        assert not account.search(account.general_binding(), "notes.txt")
+    with workspace_context(target):
+        store = get_attachment_store()
+        resolved = store.resolve_path(
+            session_id=session["id"], attachment_id="doc", filename="notes.txt"
+        )
+        assert (
+            resolved
+            == account.binding_by_id(target).root
+            / "chat"
+            / "attachments"
+            / session["id"]
+            / "doc_notes.txt"
+        )
+        assert resolved.read_bytes() == b"old upload"
+        assert account.search(account.binding_by_id(target), "notes.txt")[0]["path"].startswith(
+            "chat/attachments/"
+        )
 
 
 def test_initialized_empty_feature_can_receive_migration(account):

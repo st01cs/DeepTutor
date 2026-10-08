@@ -177,6 +177,25 @@
         "title": "AddWebSourceRequest",
         "type": "object"
       },
+      "AdminBatchDeleteRequest": {
+        "description": "Usernames for an admin-initiated batch deletion.",
+        "properties": {
+          "usernames": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Usernames",
+            "type": "array"
+          }
+        },
+        "required": [
+          "usernames"
+        ],
+        "title": "AdminBatchDeleteRequest",
+        "type": "object"
+      },
       "AdminCreateUserRequest": {
         "description": "Admin user-creation payload.\n\nA preset configures an ordinary account; it never becomes a third role.",
         "properties": {
@@ -552,7 +571,7 @@
           "llm_selection": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/LLMSelectionPayload"
+                "$ref": "#/components/schemas/deeptutor__api__routers__memory__LLMSelectionPayload"
               },
               {
                 "type": "null"
@@ -655,6 +674,16 @@
       },
       "AutoMarkRequest": {
         "properties": {
+          "llm_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/deeptutor__api__routers__co_writer__LLMSelectionPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "text": {
             "maxLength": 600000,
             "title": "Text",
@@ -683,6 +712,73 @@
           "operation_id"
         ],
         "title": "AutoMarkResponse",
+        "type": "object"
+      },
+      "BilingualPairingInfo": {
+        "properties": {
+          "pairing_id": {
+            "title": "Pairing Id",
+            "type": "string"
+          },
+          "pairing_method": {
+            "default": "hreflang",
+            "title": "Pairing Method",
+            "type": "string"
+          },
+          "source_file": {
+            "default": "",
+            "title": "Source File",
+            "type": "string"
+          },
+          "source_lang": {
+            "default": "",
+            "title": "Source Lang",
+            "type": "string"
+          },
+          "source_url": {
+            "title": "Source Url",
+            "type": "string"
+          },
+          "target_file": {
+            "default": "",
+            "title": "Target File",
+            "type": "string"
+          },
+          "target_lang": {
+            "default": "",
+            "title": "Target Lang",
+            "type": "string"
+          },
+          "target_url": {
+            "title": "Target Url",
+            "type": "string"
+          },
+          "updated_at": {
+            "default": 0,
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pairing_id",
+          "source_url",
+          "target_url"
+        ],
+        "title": "BilingualPairingInfo",
+        "type": "object"
+      },
+      "Body_admin_import_users_api_auth_users_import_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_admin_import_users_api_auth_users_import_post",
         "type": "object"
       },
       "Body_create_knowledge_base_api_knowledge_bases_post": {
@@ -731,6 +827,17 @@
             "default": "",
             "title": "Search Mode",
             "type": "string"
+          },
+          "storage_workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Workspace Id"
           }
         },
         "required": [
@@ -820,6 +927,20 @@
           "file"
         ],
         "title": "Body_library_add",
+        "type": "object"
+      },
+      "Body_preview_office_upload_api_file_preview_pdf_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_preview_office_upload_api_file_preview_pdf_post",
         "type": "object"
       },
       "Body_reindex_knowledge_base_api_knowledge_bases__kb_name__reindex_post": {
@@ -1903,8 +2024,7 @@
           },
           "modules": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ModuleInput"
             },
             "maxItems": 20,
             "title": "Modules",
@@ -1988,6 +2108,29 @@
           "knowledge_base_id"
         ],
         "title": "ConnectImaRequest",
+        "type": "object"
+      },
+      "ConnectKiwixRequest": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "server_url": {
+            "title": "Server Url",
+            "type": "string"
+          },
+          "zim_name": {
+            "title": "Zim Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_url",
+          "zim_name",
+          "name"
+        ],
+        "title": "ConnectKiwixRequest",
         "type": "object"
       },
       "ConnectLightRagServerRequest": {
@@ -2185,6 +2328,29 @@
           }
         },
         "title": "CreateBookRequest",
+        "type": "object"
+      },
+      "CreateCard": {
+        "additionalProperties": false,
+        "description": "A learner-authored task; identifiers and timestamps are server-owned.",
+        "properties": {
+          "note": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Note",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "CreateCard",
         "type": "object"
       },
       "CreateCourseRequest": {
@@ -2790,7 +2956,7 @@
           "llm_selection": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/LLMSelectionPayload"
+                "$ref": "#/components/schemas/deeptutor__api__routers__memory__LLMSelectionPayload"
               },
               {
                 "type": "null"
@@ -3094,6 +3260,27 @@
               }
             ],
             "title": "Engines"
+          },
+          "image_caption": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Caption"
+          },
+          "image_description_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImageDescriptionModelSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "title": "DocumentParsingUpdate",
@@ -3244,6 +3431,16 @@
             ],
             "title": "Kb Name"
           },
+          "llm_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/deeptutor__api__routers__co_writer__LLMSelectionPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "source": {
             "anyOf": [
               {
@@ -3294,8 +3491,7 @@
         "properties": {
           "modules": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ModuleInput"
             },
             "maxItems": 20,
             "minItems": 1,
@@ -3908,6 +4104,28 @@
         "title": "ImaKnowledgeBaseSummary",
         "type": "object"
       },
+      "ImageDescriptionModelSelection": {
+        "additionalProperties": false,
+        "description": "Reference a configured vision model without changing the chat default.",
+        "properties": {
+          "model_id": {
+            "minLength": 1,
+            "title": "Model Id",
+            "type": "string"
+          },
+          "profile_id": {
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile_id",
+          "model_id"
+        ],
+        "title": "ImageDescriptionModelSelection",
+        "type": "object"
+      },
       "ImportFromBookRequest": {
         "properties": {
           "chapters": {
@@ -4037,8 +4255,7 @@
         "properties": {
           "modules": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ModuleInput"
             },
             "title": "Modules",
             "type": "array"
@@ -4187,6 +4404,24 @@
         "title": "InvidiousSettings",
         "type": "object"
       },
+      "KiwixConnectionRequest": {
+        "properties": {
+          "server_url": {
+            "title": "Server Url",
+            "type": "string"
+          },
+          "zim_name": {
+            "title": "Zim Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_url",
+          "zim_name"
+        ],
+        "title": "KiwixConnectionRequest",
+        "type": "object"
+      },
       "KnowledgeBaseInfo": {
         "properties": {
           "assigned": {
@@ -4305,6 +4540,103 @@
         "title": "KnowledgeBaseInfo",
         "type": "object"
       },
+      "KnowledgeMovePayload": {
+        "properties": {
+          "source_id": {
+            "minLength": 1,
+            "title": "Source Id",
+            "type": "string"
+          },
+          "target_workspace_id": {
+            "default": "",
+            "title": "Target Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id"
+        ],
+        "title": "KnowledgeMovePayload",
+        "type": "object"
+      },
+      "KnowledgePointInput": {
+        "properties": {
+          "client_ref": {
+            "default": "",
+            "title": "Client Ref",
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "module_id": {
+            "default": "",
+            "title": "Module Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "prerequisite_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Prerequisite Ids",
+            "type": "array"
+          },
+          "prerequisite_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Prerequisite Refs",
+            "type": "array"
+          },
+          "topic_source_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topic Source Ids",
+            "type": "array"
+          },
+          "topic_source_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topic Source Refs",
+            "type": "array"
+          },
+          "type": {
+            "$ref": "#/components/schemas/KnowledgeType",
+            "default": "concept"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "KnowledgePointInput",
+        "type": "object"
+      },
+      "KnowledgeType": {
+        "enum": [
+          "memory",
+          "concept",
+          "procedure",
+          "design"
+        ],
+        "title": "KnowledgeType",
+        "type": "string"
+      },
       "LLMSelection": {
         "additionalProperties": false,
         "properties": {
@@ -4324,30 +4656,16 @@
         "title": "LLMSelection",
         "type": "object"
       },
-      "LLMSelectionPayload": {
-        "properties": {
-          "model_id": {
-            "title": "Model Id",
-            "type": "string"
-          },
-          "profile_id": {
-            "title": "Profile Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "profile_id",
-          "model_id"
-        ],
-        "title": "LLMSelectionPayload",
-        "type": "object"
-      },
       "LanguageUpdate": {
         "properties": {
           "language": {
             "enum": [
+              "en",
               "zh",
-              "en"
+              "fr",
+              "de",
+              "uk",
+              "pl"
             ],
             "title": "Language",
             "type": "string"
@@ -4606,6 +4924,17 @@
               }
             ],
             "title": "Llm Profile Id"
+          },
+          "llm_timeout": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Timeout"
           },
           "max_concurrent_files": {
             "anyOf": [
@@ -4952,6 +5281,17 @@
             "title": "Id",
             "type": "string"
           },
+          "last_sync": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sync"
+          },
           "path": {
             "title": "Path",
             "type": "string"
@@ -5088,6 +5428,17 @@
               }
             ],
             "title": "Hnsw M"
+          },
+          "image_description_batch_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Description Batch Size"
           },
           "image_description_concurrency": {
             "anyOf": [
@@ -5324,6 +5675,192 @@
           "confirmation"
         ],
         "title": "ManagedUpdateRequest",
+        "type": "object"
+      },
+      "MarkCreateRequest": {
+        "properties": {
+          "end_locator": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "End Locator",
+            "type": "integer"
+          },
+          "end_seconds": {
+            "maximum": 86400.0,
+            "minimum": 0.0,
+            "title": "End Seconds",
+            "type": "number"
+          },
+          "kind": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "note": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Note",
+            "type": "string"
+          },
+          "quote": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Quote",
+            "type": "string"
+          },
+          "start_locator": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Start Locator",
+            "type": "integer"
+          },
+          "start_seconds": {
+            "maximum": 86400.0,
+            "minimum": 0.0,
+            "title": "Start Seconds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "kind",
+          "start_seconds",
+          "end_seconds"
+        ],
+        "title": "MarkCreateRequest",
+        "type": "object"
+      },
+      "MarkPatchRequest": {
+        "properties": {
+          "end_locator": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Locator"
+          },
+          "end_seconds": {
+            "anyOf": [
+              {
+                "maximum": 86400.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Seconds"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "quote": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote"
+          },
+          "reviewed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed"
+          },
+          "start_locator": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Locator"
+          },
+          "start_seconds": {
+            "anyOf": [
+              {
+                "maximum": 86400.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Seconds"
+          }
+        },
+        "title": "MarkPatchRequest",
+        "type": "object"
+      },
+      "MarkSuggestionRequest": {
+        "properties": {
+          "time_seconds": {
+            "default": 0.0,
+            "maximum": 86400.0,
+            "minimum": 0.0,
+            "title": "Time Seconds",
+            "type": "number"
+          }
+        },
+        "title": "MarkSuggestionRequest",
         "type": "object"
       },
       "MasteryCardAnswer": {
@@ -5835,6 +6372,61 @@
         "title": "ModelUsage",
         "type": "object"
       },
+      "ModuleInput": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "knowledge_points": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgePointInput"
+            },
+            "title": "Knowledge Points",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "objective": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Objective",
+            "type": "string"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          },
+          "pass_threshold": {
+            "default": 0.7,
+            "title": "Pass Threshold",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ModuleInput",
+        "type": "object"
+      },
       "MoveBlockRequest": {
         "properties": {
           "block_id": {
@@ -6092,6 +6684,21 @@
             "title": "Options",
             "type": "object"
           },
+          "origin_ref": {
+            "default": "",
+            "title": "Origin Ref",
+            "type": "string"
+          },
+          "origin_type": {
+            "default": "conversation",
+            "enum": [
+              "conversation",
+              "external_import",
+              "document_analysis"
+            ],
+            "title": "Origin Type",
+            "type": "string"
+          },
           "practice": {
             "anyOf": [
               {
@@ -6186,6 +6793,7 @@
             "type": "string"
           },
           "session_id": {
+            "default": "",
             "title": "Session Id",
             "type": "string"
           },
@@ -6232,7 +6840,6 @@
         },
         "required": [
           "id",
-          "session_id",
           "question",
           "created_at",
           "updated_at"
@@ -7089,6 +7696,11 @@
             ],
             "title": "Profile Id"
           },
+          "proxy": {
+            "default": "",
+            "title": "Proxy",
+            "type": "string"
+          },
           "service": {
             "default": "llm",
             "enum": [
@@ -7224,6 +7836,12 @@
             "title": "Source Anchor",
             "type": "string"
           },
+          "submission_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Submission Id",
+            "type": "string"
+          },
           "turn_id": {
             "default": "",
             "title": "Turn Id",
@@ -7265,6 +7883,12 @@
           "question_id": {
             "default": "",
             "title": "Question Id",
+            "type": "string"
+          },
+          "submission_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Submission Id",
             "type": "string"
           },
           "user_answer": {
@@ -7395,6 +8019,16 @@
             ],
             "title": "Kb Name"
           },
+          "llm_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/deeptutor__api__routers__co_writer__LLMSelectionPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "mode": {
             "default": "rewrite",
             "enum": [
@@ -7454,6 +8088,135 @@
           "operation_id"
         ],
         "title": "ReactEditResponse",
+        "type": "object"
+      },
+      "ReadAloudAudioPayload": {
+        "properties": {
+          "locator": {
+            "minimum": 1.0,
+            "title": "Locator",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "locator"
+        ],
+        "title": "ReadAloudAudioPayload",
+        "type": "object"
+      },
+      "ReadingActivityRecord": {
+        "description": "One successful Reading-extension action, without source content.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "activity_id": {
+            "title": "Activity Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "extension_id": {
+            "title": "Extension Id",
+            "type": "string"
+          },
+          "locator": {
+            "minimum": 1.0,
+            "title": "Locator",
+            "type": "integer"
+          },
+          "material_id": {
+            "title": "Material Id",
+            "type": "string"
+          },
+          "result_type": {
+            "enum": [
+              "card",
+              "quiz",
+              "feedback",
+              "browser_speech"
+            ],
+            "title": "Result Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "activity_id",
+          "material_id",
+          "extension_id",
+          "action",
+          "locator",
+          "result_type"
+        ],
+        "title": "ReadingActivityRecord",
+        "type": "object"
+      },
+      "ReadingLearningRecords": {
+        "description": "Account-scoped Reading summary for reporting surfaces.",
+        "properties": {
+          "activities": {
+            "items": {
+              "$ref": "#/components/schemas/ReadingActivityRecord"
+            },
+            "title": "Activities",
+            "type": "array"
+          },
+          "progress": {
+            "items": {
+              "$ref": "#/components/schemas/ReadingProgressRecord"
+            },
+            "title": "Progress",
+            "type": "array"
+          }
+        },
+        "title": "ReadingLearningRecords",
+        "type": "object"
+      },
+      "ReadingProgressRecord": {
+        "description": "One material's Reading progress in an account's learning records.",
+        "properties": {
+          "furthest_locator": {
+            "minimum": 1.0,
+            "title": "Furthest Locator",
+            "type": "integer"
+          },
+          "furthest_percentage": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Furthest Percentage",
+            "type": "number"
+          },
+          "latest_locator": {
+            "minimum": 1.0,
+            "title": "Latest Locator",
+            "type": "integer"
+          },
+          "latest_percentage": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Latest Percentage",
+            "type": "number"
+          },
+          "material_id": {
+            "title": "Material Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "number"
+          }
+        },
+        "required": [
+          "material_id",
+          "latest_locator",
+          "latest_percentage",
+          "furthest_locator",
+          "furthest_percentage"
+        ],
+        "title": "ReadingProgressRecord",
         "type": "object"
       },
       "ReadingReference": {
@@ -7926,6 +8689,22 @@
         "title": "ReviewRequest",
         "type": "object"
       },
+      "ReviewSettingsRequest": {
+        "description": "A per-path recall target; higher values schedule shorter intervals.",
+        "properties": {
+          "desired_retention": {
+            "maximum": 0.99,
+            "minimum": 0.7,
+            "title": "Desired Retention",
+            "type": "number"
+          }
+        },
+        "required": [
+          "desired_retention"
+        ],
+        "title": "ReviewSettingsRequest",
+        "type": "object"
+      },
       "RoundSummaryRequest": {
         "properties": {
           "partner_id": {
@@ -7988,7 +8767,7 @@
           "llm_selection": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/LLMSelectionPayload"
+                "$ref": "#/components/schemas/deeptutor__api__routers__memory__LLMSelectionPayload"
               },
               {
                 "type": "null"
@@ -8231,6 +9010,54 @@
         "title": "SessionDetail",
         "type": "object"
       },
+      "SessionHandoffCompleteRequest": {
+        "description": "Public request that trades a JWE ticket for the normal cookie.",
+        "properties": {
+          "ticket": {
+            "maxLength": 8192,
+            "minLength": 32,
+            "title": "Ticket",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket"
+        ],
+        "title": "SessionHandoffCompleteRequest",
+        "type": "object"
+      },
+      "SessionHandoffCreateRequest": {
+        "description": "Private request that starts a one-time public handoff.",
+        "properties": {
+          "public_origin": {
+            "maxLength": 2048,
+            "minLength": 8,
+            "title": "Public Origin",
+            "type": "string"
+          }
+        },
+        "required": [
+          "public_origin"
+        ],
+        "title": "SessionHandoffCreateRequest",
+        "type": "object"
+      },
+      "SessionHandoffExchangeRequest": {
+        "description": "Public request that trades a pairing code for a JWE ticket.",
+        "properties": {
+          "code": {
+            "maxLength": 256,
+            "minLength": 16,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "SessionHandoffExchangeRequest",
+        "type": "object"
+      },
       "SessionKeyBody": {
         "properties": {
           "session_key": {
@@ -8336,6 +9163,26 @@
           "title"
         ],
         "title": "SessionRenameRequest",
+        "type": "object"
+      },
+      "SessionReplyLanguageRequest": {
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          }
+        },
+        "required": [
+          "language"
+        ],
+        "title": "SessionReplyLanguageRequest",
         "type": "object"
       },
       "SessionSummary": {
@@ -8458,6 +9305,50 @@
           }
         },
         "title": "SettingsDraftPayload",
+        "type": "object"
+      },
+      "SettingsPresetDraftRequest": {
+        "description": "The current draft envelope submitted alongside a named preset.",
+        "properties": {
+          "catalog": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog"
+          },
+          "extensions": {
+            "additionalProperties": true,
+            "title": "Extensions",
+            "type": "object"
+          }
+        },
+        "title": "SettingsPresetDraftRequest",
+        "type": "object"
+      },
+      "SettingsProfileImportPayload": {
+        "description": "An exported value-free settings profile submitted for review only.",
+        "properties": {
+          "profile": {
+            "additionalProperties": true,
+            "title": "Profile",
+            "type": "object"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "profile"
+        ],
+        "title": "SettingsProfileImportPayload",
         "type": "object"
       },
       "SidebarDescriptionUpdate": {
@@ -8829,6 +9720,66 @@
         "title": "SyllabusUnitRequest",
         "type": "object"
       },
+      "SyncFolderResponse": {
+        "description": "Response model for a linked-folder sync request.",
+        "properties": {
+          "file_count": {
+            "title": "File Count",
+            "type": "integer"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "folder_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder Path"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "modified_files": {
+            "title": "Modified Files",
+            "type": "integer"
+          },
+          "new_files": {
+            "title": "New Files",
+            "type": "integer"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "message",
+          "files",
+          "new_files",
+          "modified_files",
+          "file_count",
+          "task_id"
+        ],
+        "title": "SyncFolderResponse",
+        "type": "object"
+      },
       "SyncObjectIn": {
         "properties": {
           "color": {
@@ -9032,6 +9983,76 @@
           "text"
         ],
         "title": "TTSRequest",
+        "type": "object"
+      },
+      "TaskBoard": {
+        "description": "A consistent snapshot of the current workspace's board.",
+        "properties": {
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/TaskCard"
+            },
+            "title": "Cards",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cards"
+        ],
+        "title": "TaskBoard",
+        "type": "object"
+      },
+      "TaskCard": {
+        "additionalProperties": false,
+        "description": "Persisted card returned to the board, including archived cards.",
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Note",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "todo",
+              "doing",
+              "done"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "id",
+          "status",
+          "archived",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TaskCard",
         "type": "object"
       },
       "TestResponse": {
@@ -9359,6 +10380,11 @@
             "title": "Available",
             "type": "boolean"
           },
+          "client_ref": {
+            "default": "",
+            "title": "Client Ref",
+            "type": "string"
+          },
           "excerpt": {
             "default": "",
             "maxLength": 8000,
@@ -9497,6 +10523,25 @@
             ],
             "default": "chat",
             "title": "Capability"
+          },
+          "capability_once": {
+            "default": false,
+            "title": "Capability Once",
+            "type": "boolean"
+          },
+          "client_submission_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Client Submission Id"
           },
           "config": {
             "additionalProperties": true,
@@ -9709,6 +10754,11 @@
             "default": null,
             "title": "Persona"
           },
+          "preserve_session_preferences": {
+            "default": false,
+            "title": "Preserve Session Preferences",
+            "type": "boolean"
+          },
           "question_notebook_references": {
             "items": {
               "type": "integer"
@@ -9782,11 +10832,26 @@
                 "type": "integer"
               },
               {
+                "type": "string"
+              },
+              {
                 "type": "null"
               }
             ],
             "default": null,
             "title": "Regenerated From Message Id"
+          },
+          "reply_language_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reply Language Override"
           },
           "selection_tutor_context": {
             "anyOf": [
@@ -10061,8 +11126,12 @@
             "anyOf": [
               {
                 "enum": [
+                  "en",
                   "zh",
-                  "en"
+                  "fr",
+                  "de",
+                  "uk",
+                  "pl"
                 ],
                 "type": "string"
               },
@@ -10076,8 +11145,21 @@
             "anyOf": [
               {
                 "enum": [
+                  "en",
                   "zh",
-                  "en"
+                  "zh-tw",
+                  "ja",
+                  "ko",
+                  "es",
+                  "fr",
+                  "de",
+                  "ru",
+                  "pt",
+                  "it",
+                  "ar",
+                  "pl",
+                  "uk",
+                  "ms"
                 ],
                 "type": "string"
               },
@@ -10207,6 +11289,66 @@
           "block_id"
         ],
         "title": "UpdateBlockRequest",
+        "type": "object"
+      },
+      "UpdateCard": {
+        "additionalProperties": false,
+        "description": "Only supplied fields change, preserving concurrent edits to other fields.",
+        "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "todo",
+                  "doing",
+                  "done"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "UpdateCard",
         "type": "object"
       },
       "UpdateCourseRequest": {
@@ -10777,7 +11919,7 @@
           "llm_selection": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/LLMSelectionPayload"
+                "$ref": "#/components/schemas/deeptutor__api__routers__memory__LLMSelectionPayload"
               },
               {
                 "type": "null"
@@ -11004,6 +12146,21 @@
             ],
             "title": "Options"
           },
+          "origin_ref": {
+            "default": "",
+            "title": "Origin Ref",
+            "type": "string"
+          },
+          "origin_type": {
+            "default": "conversation",
+            "enum": [
+              "conversation",
+              "external_import",
+              "document_analysis"
+            ],
+            "title": "Origin Type",
+            "type": "string"
+          },
           "quality": {
             "anyOf": [
               {
@@ -11055,6 +12212,7 @@
             "type": "string"
           },
           "session_id": {
+            "default": "",
             "title": "Session Id",
             "type": "string"
           },
@@ -11097,7 +12255,6 @@
           }
         },
         "required": [
-          "session_id",
           "question_id",
           "question"
         ],
@@ -11409,6 +12566,19 @@
         "title": "VoiceAutoplayUpdate",
         "type": "object"
       },
+      "VoiceMathSpeakUpdate": {
+        "properties": {
+          "voice_math_speak": {
+            "title": "Voice Math Speak",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "voice_math_speak"
+        ],
+        "title": "VoiceMathSpeakUpdate",
+        "type": "object"
+      },
       "VoicePreviewPayload": {
         "properties": {
           "catalog": {
@@ -11440,12 +12610,49 @@
         "title": "VoicePreviewPayload",
         "type": "object"
       },
+      "WebContinuityBody": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "session_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Key"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "WebContinuityBody",
+        "type": "object"
+      },
       "WebSourceInfo": {
         "properties": {
           "added_at": {
             "default": "",
             "title": "Added At",
             "type": "string"
+          },
+          "auto_sync_enabled": {
+            "default": true,
+            "title": "Auto Sync Enabled",
+            "type": "boolean"
+          },
+          "bilingual_pairings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Bilingual Pairings",
+            "type": "array"
           },
           "enabled": {
             "default": true,
@@ -11504,6 +12711,13 @@
             "title": "Page Count",
             "type": "integer"
           },
+          "sync_interval_hours": {
+            "default": 24,
+            "maximum": 168.0,
+            "minimum": 1.0,
+            "title": "Sync Interval Hours",
+            "type": "integer"
+          },
           "url": {
             "title": "Url",
             "type": "string"
@@ -11514,6 +12728,91 @@
           "url"
         ],
         "title": "WebSourceInfo",
+        "type": "object"
+      },
+      "WebSourceScheduleUpdate": {
+        "properties": {
+          "auto_sync_enabled": {
+            "title": "Auto Sync Enabled",
+            "type": "boolean"
+          },
+          "sync_interval_hours": {
+            "default": 24,
+            "maximum": 168.0,
+            "minimum": 1.0,
+            "title": "Sync Interval Hours",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "auto_sync_enabled"
+        ],
+        "title": "WebSourceScheduleUpdate",
+        "type": "object"
+      },
+      "WebSourceSyncJobInfo": {
+        "properties": {
+          "attempt": {
+            "default": 0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "cancel_requested": {
+            "default": false,
+            "title": "Cancel Requested",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "kb_name": {
+            "title": "Kb Name",
+            "type": "string"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "next_run_at": {
+            "title": "Next Run At",
+            "type": "integer"
+          },
+          "owner_id": {
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_id",
+          "kb_name",
+          "source_id",
+          "state",
+          "next_run_at"
+        ],
+        "title": "WebSourceSyncJobInfo",
         "type": "object"
       },
       "WhiteboardPinRequest": {
@@ -11533,6 +12832,12 @@
       },
       "WorkspaceCreateRequest": {
         "properties": {
+          "color": {
+            "default": "",
+            "maxLength": 32,
+            "title": "Color",
+            "type": "string"
+          },
           "description": {
             "default": "",
             "maxLength": 2000,
@@ -11678,6 +12983,18 @@
       },
       "WorkspaceUpdateRequest": {
         "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
           "description": {
             "anyOf": [
               {
@@ -11718,6 +13035,39 @@
         "title": "YouTubeSettings",
         "type": "object"
       },
+      "ZimArticleImportRequest": {
+        "properties": {
+          "article_path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Article Path",
+            "type": "string"
+          },
+          "kb_ref": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Kb Ref",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Title",
+            "type": "string"
+          },
+          "workspace_id": {
+            "default": "",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_ref",
+          "article_path"
+        ],
+        "title": "ZimArticleImportRequest",
+        "type": "object"
+      },
       "deeptutor__api__routers__book__ProgressRequest": {
         "properties": {
           "book_id": {
@@ -11734,6 +13084,54 @@
           "page_id"
         ],
         "title": "ProgressRequest",
+        "type": "object"
+      },
+      "deeptutor__api__routers__co_writer__LLMSelectionPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "profile_id": {
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
+          }
+        },
+        "required": [
+          "profile_id",
+          "model_id"
+        ],
+        "title": "LLMSelectionPayload",
+        "type": "object"
+      },
+      "deeptutor__api__routers__memory__LLMSelectionPayload": {
+        "properties": {
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "profile_id": {
+            "title": "Profile Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile_id",
+          "model_id"
+        ],
+        "title": "LLMSelectionPayload",
         "type": "object"
       },
       "deeptutor__api__routers__video_learning__ProgressRequest": {
@@ -12995,6 +14393,172 @@
         ]
       }
     },
+    "/api/auth/session-handoff": {
+      "post": {
+        "description": "Create a host-bound, one-time pairing code from the private origin.",
+        "operationId": "create_session_handoff_api_auth_session_handoff_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionHandoffCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Session Handoff Api Auth Session Handoff Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Session Handoff",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/session-handoff/complete": {
+      "post": {
+        "description": "Consume a ticket once and issue the normal HttpOnly session cookie.",
+        "operationId": "complete_session_handoff_api_auth_session_handoff_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionHandoffCompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Complete Session Handoff Api Auth Session Handoff Complete Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Session Handoff",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/session-handoff/exchange": {
+      "post": {
+        "description": "Consume a pairing code and return a short-lived ticket in the response body.",
+        "operationId": "exchange_session_handoff_api_auth_session_handoff_exchange_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionHandoffExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Exchange Session Handoff Api Auth Session Handoff Exchange Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exchange Session Handoff",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/auth/status": {
       "get": {
         "description": "Return whether auth is enabled and whether the current request is authenticated.",
@@ -13131,7 +14695,7 @@
         ]
       },
       "post": {
-        "description": "Admin-only: create a new user account.\n\nReplaces the public ``/register`` flow once the first admin exists. The\nnew account is always created with role=``user``; admins can promote\nlater via ``PUT /users/{username}/role``.",
+        "description": "Admin-only: create one ordinary user account.",
         "operationId": "admin_create_user_api_auth_users_post",
         "parameters": [
           {
@@ -13202,6 +14766,162 @@
           }
         },
         "summary": "Admin Create User",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/users/batch-delete": {
+      "post": {
+        "description": "Delete selected users and report each outcome separately.",
+        "operationId": "batch_remove_users_api_auth_users_batch_delete_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminBatchDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Batch Remove Users Api Auth Users Batch Delete Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Batch Remove Users",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/users/import": {
+      "post": {
+        "description": "Admin-only: provision ordinary users from a CSV file.\n\nThe response is row-oriented so one invalid record does not erase the\ncontext of the valid records around it. Passwords are never returned.",
+        "operationId": "admin_import_users_api_auth_users_import_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_admin_import_users_api_auth_users_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Admin Import Users Api Auth Users Import Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Import Users",
         "tags": [
           "auth"
         ]
@@ -18695,6 +20415,151 @@
         ]
       }
     },
+    "/api/file-preview/pdf": {
+      "get": {
+        "description": "Render a file URL that this same authenticated user could open.",
+        "operationId": "preview_office_source_api_file_preview_pdf_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Office Source",
+        "tags": [
+          "file-preview"
+        ]
+      },
+      "post": {
+        "description": "Render a bounded pending Blob/data attachment that has no file URL.",
+        "operationId": "preview_office_upload_api_file_preview_pdf_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_preview_office_upload_api_file_preview_pdf_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Office Upload",
+        "tags": [
+          "file-preview"
+        ]
+      }
+    },
     "/api/imports/chat-history": {
       "get": {
         "operationId": "list_imported_chat_history_api_imports_chat_history_get",
@@ -19272,6 +21137,84 @@
           }
         },
         "summary": "Connect Ima Route",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/knowledge-bases/connect-kiwix": {
+      "post": {
+        "description": "Bind a KB to a kiwix-serve archive; no ingest or index is created.",
+        "operationId": "connect_kiwix_route_api_knowledge_bases_connect_kiwix_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectKiwixRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Connect Kiwix Route Api Knowledge Bases Connect Kiwix Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Connect Kiwix Route",
         "tags": [
           "knowledge-bases"
         ]
@@ -19912,6 +21855,186 @@
         ]
       }
     },
+    "/api/knowledge-bases/kiwix-articles": {
+      "get": {
+        "description": "List bounded article matches for Knowledge Center and Reading import.",
+        "operationId": "search_kiwix_articles_api_knowledge_bases_kiwix_articles_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kb_ref",
+            "required": true,
+            "schema": {
+              "maxLength": 300,
+              "minLength": 1,
+              "title": "Kb Ref",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 500,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Search Kiwix Articles Api Knowledge Bases Kiwix Articles Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Kiwix Articles",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/knowledge-bases/kiwix-catalog": {
+      "get": {
+        "description": "List exact ZIM names from legacy OPDS; v2 can omit loaded archives.",
+        "operationId": "list_kiwix_catalog_api_knowledge_bases_kiwix_catalog_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "server_url",
+            "required": true,
+            "schema": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "title": "Server Url",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 100,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Kiwix Catalog Api Knowledge Bases Kiwix Catalog Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Kiwix Catalog",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
     "/api/knowledge-bases/list-ima": {
       "post": {
         "description": "List IMA knowledge bases without storing or echoing credentials.",
@@ -20131,6 +22254,84 @@
           }
         },
         "summary": "Probe Ima Route",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/knowledge-bases/probe-kiwix": {
+      "post": {
+        "description": "Verify that one archive is readable without copying its ZIM file.",
+        "operationId": "probe_kiwix_route_api_knowledge_bases_probe_kiwix_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KiwixConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Probe Kiwix Route Api Knowledge Bases Probe Kiwix Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probe Kiwix Route",
         "tags": [
           "knowledge-bases"
         ]
@@ -23568,7 +25769,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SyncFolderResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -23818,6 +26021,88 @@
         ]
       }
     },
+    "/api/knowledge-bases/{kb_name}/visual-assets/{asset_id}": {
+      "get": {
+        "description": "Serve a verified source image from an access checked local KB.",
+        "operationId": "serve_kb_visual_asset_api_knowledge_bases__kb_name__visual_assets__asset_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_name",
+            "required": true,
+            "schema": {
+              "title": "Kb Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "title": "Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Serve Kb Visual Asset",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
     "/api/knowledge-bases/{kb_name}/web-source": {
       "post": {
         "operationId": "add_web_source_api_knowledge_bases__kb_name__web_source_post",
@@ -23902,6 +26187,84 @@
         ]
       }
     },
+    "/api/knowledge-bases/{kb_name}/web-source-sync": {
+      "get": {
+        "operationId": "get_web_source_sync_jobs_api_knowledge_bases__kb_name__web_source_sync_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_name",
+            "required": true,
+            "schema": {
+              "title": "Kb Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WebSourceSyncJobInfo"
+                  },
+                  "title": "Response Get Web Source Sync Jobs Api Knowledge Bases  Kb Name  Web Source Sync Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Web Source Sync Jobs",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
     "/api/knowledge-bases/{kb_name}/web-source/{source_id}": {
       "delete": {
         "operationId": "remove_web_source_api_knowledge_bases__kb_name__web_source__source_id__delete",
@@ -23978,6 +26341,348 @@
           }
         },
         "summary": "Remove Web Source",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/knowledge-bases/{kb_name}/web-source/{source_id}/cancel": {
+      "post": {
+        "operationId": "cancel_web_source_sync_api_knowledge_bases__kb_name__web_source__source_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_name",
+            "required": true,
+            "schema": {
+              "title": "Kb Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Web Source Sync",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/knowledge-bases/{kb_name}/web-source/{source_id}/pairings": {
+      "get": {
+        "operationId": "get_web_source_pairings_api_knowledge_bases__kb_name__web_source__source_id__pairings_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_name",
+            "required": true,
+            "schema": {
+              "title": "Kb Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BilingualPairingInfo"
+                  },
+                  "title": "Response Get Web Source Pairings Api Knowledge Bases  Kb Name  Web Source  Source Id  Pairings Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Web Source Pairings",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/knowledge-bases/{kb_name}/web-source/{source_id}/retry": {
+      "post": {
+        "operationId": "retry_web_source_sync_api_knowledge_bases__kb_name__web_source__source_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_name",
+            "required": true,
+            "schema": {
+              "title": "Kb Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Web Source Sync",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/knowledge-bases/{kb_name}/web-source/{source_id}/schedule": {
+      "put": {
+        "operationId": "update_web_source_schedule_api_knowledge_bases__kb_name__web_source__source_id__schedule_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_name",
+            "required": true,
+            "schema": {
+              "title": "Kb Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebSourceScheduleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebSourceInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Web Source Schedule",
         "tags": [
           "knowledge-bases"
         ]
@@ -25610,6 +28315,72 @@
         ]
       }
     },
+    "/api/mastery-paths/reading/records": {
+      "get": {
+        "description": "Reading progress and extension activity for the current account.",
+        "operationId": "list_reading_learning_records_api_mastery_paths_reading_records_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingLearningRecords"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Reading Learning Records",
+        "tags": [
+          "mastery-path"
+        ]
+      }
+    },
     "/api/mastery-paths/topics": {
       "get": {
         "operationId": "list_topics_api_mastery_paths_topics_get",
@@ -26204,6 +28975,158 @@
           }
         },
         "summary": "Set Learner Override",
+        "tags": [
+          "mastery-path"
+        ]
+      }
+    },
+    "/api/mastery-paths/topics/{path_id}/review-settings": {
+      "get": {
+        "operationId": "get_review_settings_api_mastery_paths_topics__path_id__review_settings_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path_id",
+            "required": true,
+            "schema": {
+              "title": "Path Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Settings",
+        "tags": [
+          "mastery-path"
+        ]
+      },
+      "put": {
+        "operationId": "update_review_settings_api_mastery_paths_topics__path_id__review_settings_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path_id",
+            "required": true,
+            "schema": {
+              "title": "Path Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Review Settings",
         "tags": [
           "mastery-path"
         ]
@@ -35182,6 +38105,117 @@
         ]
       }
     },
+    "/api/partners/{partner_id}/history/page": {
+      "get": {
+        "description": "Read older turns of one actor-scoped conversation in bounded pages.",
+        "operationId": "get_partner_history_page_api_partners__partner_id__history_page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "partner_id",
+            "required": true,
+            "schema": {
+              "title": "Partner Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_key",
+            "required": true,
+            "schema": {
+              "title": "Session Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 60,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Partner History Page",
+        "tags": [
+          "partners"
+        ]
+      }
+    },
     "/api/partners/{partner_id}/links": {
       "get": {
         "description": "Your own linked chat accounts for this partner — never anyone else's.",
@@ -36104,6 +39138,158 @@
           }
         },
         "summary": "Stop Partner",
+        "tags": [
+          "partners"
+        ]
+      }
+    },
+    "/api/partners/{partner_id}/web-continuity": {
+      "get": {
+        "operationId": "get_partner_web_continuity_api_partners__partner_id__web_continuity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "partner_id",
+            "required": true,
+            "schema": {
+              "title": "Partner Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Partner Web Continuity",
+        "tags": [
+          "partners"
+        ]
+      },
+      "put": {
+        "operationId": "put_partner_web_continuity_api_partners__partner_id__web_continuity_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "partner_id",
+            "required": true,
+            "schema": {
+              "title": "Partner Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebContinuityBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Partner Web Continuity",
         "tags": [
           "partners"
         ]
@@ -37260,9 +40446,35 @@
           {
             "in": "query",
             "name": "session_id",
-            "required": true,
+            "required": false,
             "schema": {
+              "default": "",
               "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "origin_type",
+            "required": false,
+            "schema": {
+              "default": "conversation",
+              "enum": [
+                "conversation",
+                "external_import",
+                "document_analysis"
+              ],
+              "title": "Origin Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "origin_ref",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Origin Ref",
               "type": "string"
             }
           },
@@ -39213,6 +42425,84 @@
         ]
       }
     },
+    "/api/reading/library/import-zim-article": {
+      "post": {
+        "description": "Open one selected Kiwix article in Immersive Reading.\n\nOnly its bounded text snapshot enters the reading store.  The ZIM archive\nstays on the existing kiwix-serve instance, without bulk extraction.",
+        "operationId": "import_zim_article_api_reading_library_import_zim_article_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ZimArticleImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Import Zim Article Api Reading Library Import Zim Article Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Zim Article",
+        "tags": [
+          "reading"
+        ]
+      }
+    },
     "/api/reading/library/materials": {
       "get": {
         "description": "Every material the owner has, with the collections holding each one.\n\nMembership travels with the row because the library view exists to answer\n\"where is this used, and what did I upload that is used nowhere\" — a\nquestion the client cannot ask one material at a time.",
@@ -40561,6 +43851,168 @@
         ]
       }
     },
+    "/api/reading/materials/{material_id}/media": {
+      "get": {
+        "description": "The embedded-image index (name / locator / mime / size), empty if none.",
+        "operationId": "list_material_media_api_reading_materials__material_id__media_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Material Media Api Reading Materials  Material Id  Media Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Material Media",
+        "tags": [
+          "reading"
+        ]
+      }
+    },
+    "/api/reading/materials/{material_id}/media/{name}": {
+      "get": {
+        "description": "One embedded image's bytes, for the reader pane's media strip.",
+        "operationId": "get_material_media_api_reading_materials__material_id__media__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Material Media",
+        "tags": [
+          "reading"
+        ]
+      }
+    },
     "/api/reading/materials/{material_id}/position": {
       "get": {
         "description": "Return the user's last durable viewport for this material.",
@@ -40719,6 +44171,82 @@
         ]
       }
     },
+    "/api/reading/materials/{material_id}/quiz/rewards": {
+      "get": {
+        "operationId": "list_quiz_rewards_api_reading_materials__material_id__quiz_rewards_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Quiz Rewards Api Reading Materials  Material Id  Quiz Rewards Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Quiz Rewards",
+        "tags": [
+          "reading-extensions"
+        ]
+      }
+    },
     "/api/reading/materials/{material_id}/raw": {
       "get": {
         "description": "The original bytes, for the faithful viewer. Serves Range requests.",
@@ -40787,6 +44315,162 @@
           }
         },
         "summary": "Get Raw",
+        "tags": [
+          "reading"
+        ]
+      }
+    },
+    "/api/reading/materials/{material_id}/read-aloud": {
+      "post": {
+        "description": "Synthesize one assigned material unit with the active server voice.",
+        "operationId": "read_material_aloud_api_reading_materials__material_id__read_aloud_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadAloudAudioPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Material Aloud",
+        "tags": [
+          "reading-extensions"
+        ]
+      }
+    },
+    "/api/reading/materials/{material_id}/render": {
+      "get": {
+        "description": "Serve a browser-ready EPUB archive, or the original for other formats.",
+        "operationId": "get_render_api_reading_materials__material_id__render_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Render",
         "tags": [
           "reading"
         ]
@@ -42344,99 +46028,6 @@
           }
         },
         "summary": "Organize Reading Notes",
-        "tags": [
-          "reading"
-        ]
-      }
-    },
-    "/api/reading/workspaces/{workspace_id}/openers": {
-      "get": {
-        "description": "Three things a learner could open this material with.\n\nAn empty list means the panel keeps its own generic suggestions — this is\na nicety, never a dependency.",
-        "operationId": "get_workspace_openers_api_reading_workspaces__workspace_id__openers_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "workspace_id",
-            "required": true,
-            "schema": {
-              "title": "Workspace Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "locator",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Locator"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "dt_token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Dt Token"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Workspace Openers Api Reading Workspaces  Workspace Id  Openers Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Workspace Openers",
         "tags": [
           "reading"
         ]
@@ -44072,6 +47663,89 @@
           }
         },
         "summary": "Record Quiz Results",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/sessions/{session_id}/reply-language": {
+      "patch": {
+        "description": "Fix this conversation's reply language, or return to the account default.",
+        "operationId": "update_session_reply_language_api_sessions__session_id__reply_language_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionReplyLanguageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Session Reply Language",
         "tags": [
           "sessions"
         ]
@@ -47118,6 +50792,295 @@
         ]
       }
     },
+    "/api/settings/presets": {
+      "get": {
+        "description": "List value-free starting points for a reviewable draft.",
+        "operationId": "get_settings_presets_api_settings_presets_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Settings Presets",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/presets/{preset_id}/draft": {
+      "post": {
+        "description": "Load a named preset into the existing draft for review.",
+        "operationId": "stage_settings_preset_api_settings_presets__preset_id__draft_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "preset_id",
+            "required": true,
+            "schema": {
+              "title": "Preset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPresetDraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stage Settings Preset Api Settings Presets  Preset Id  Draft Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stage Settings Preset",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/profile": {
+      "get": {
+        "description": "Export effective settings with credentials and deployment values removed.",
+        "operationId": "get_settings_profile_api_settings_profile_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Settings Profile",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/profile/diff": {
+      "post": {
+        "description": "Review an imported profile without changing effective settings.",
+        "operationId": "diff_settings_profile_api_settings_profile_diff_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsProfileImportPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Diff Settings Profile",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
     "/api/settings/providers/codebuddy/auth/cancel": {
       "post": {
         "operationId": "cancel_codebuddy_auth_api_settings_providers_codebuddy_auth_cancel_post",
@@ -49351,6 +53314,80 @@
         ]
       }
     },
+    "/api/settings/voice-math-speak": {
+      "put": {
+        "description": "Persist whether TTS verbalizes LaTeX as spoken math.\n\nA personal UI preference (any authenticated user). The voice router reads\nthis on each synthesis call; chat does not send a per-request override.\nDollar-sign delimiters are stripped even when this is off.",
+        "operationId": "update_voice_math_speak_api_settings_voice_math_speak_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceMathSpeakUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Voice Math Speak",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
     "/api/settings/voice/preview": {
       "post": {
         "description": "Audition the model being edited without saving or activating its catalog.",
@@ -50084,6 +54121,160 @@
           }
         },
         "summary": "Preview Workspace Data",
+        "tags": [
+          "workspace-settings"
+        ]
+      }
+    },
+    "/api/settings/workspace/knowledge-bases/move": {
+      "post": {
+        "operationId": "move_knowledge_base_api_settings_workspace_knowledge_bases_move_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeMovePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Move Knowledge Base Api Settings Workspace Knowledge Bases Move Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Move Knowledge Base",
+        "tags": [
+          "workspace-settings"
+        ]
+      }
+    },
+    "/api/settings/workspace/knowledge-bases/preview-move": {
+      "post": {
+        "operationId": "preview_knowledge_move_api_settings_workspace_knowledge_bases_preview_move_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeMovePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview Knowledge Move Api Settings Workspace Knowledge Bases Preview Move Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Knowledge Move",
         "tags": [
           "workspace-settings"
         ]
@@ -54334,6 +58525,233 @@
         ]
       }
     },
+    "/api/task-board": {
+      "get": {
+        "description": "Return active and archived cards in the current workspace.",
+        "operationId": "get_board_api_task_board_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskBoard"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Board",
+        "tags": [
+          "task-board"
+        ]
+      }
+    },
+    "/api/task-board/cards": {
+      "post": {
+        "description": "Create a task in the To do column.",
+        "operationId": "create_card_api_task_board_cards_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCard"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskBoard"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Card",
+        "tags": [
+          "task-board"
+        ]
+      }
+    },
+    "/api/task-board/cards/{card_id}": {
+      "patch": {
+        "description": "Edit, move, archive or restore an existing task.",
+        "operationId": "update_card_api_task_board_cards__card_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCard"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskBoard"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Card",
+        "tags": [
+          "task-board"
+        ]
+      }
+    },
     "/api/tools": {
       "get": {
         "description": "Return all built-in tools the chat agent can invoke, plus any\ncoming-soon placeholders for the settings page.",
@@ -54940,6 +59358,518 @@
           }
         },
         "summary": "Get Video Material",
+        "tags": [
+          "video-learning"
+        ]
+      }
+    },
+    "/api/video-learning/materials/{material_id}/mark-suggestions": {
+      "post": {
+        "operationId": "suggest_video_marks_api_video_learning_materials__material_id__mark_suggestions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkSuggestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Suggest Video Marks Api Video Learning Materials  Material Id  Mark Suggestions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Suggest Video Marks",
+        "tags": [
+          "video-learning"
+        ]
+      }
+    },
+    "/api/video-learning/materials/{material_id}/marks": {
+      "get": {
+        "operationId": "list_video_marks_api_video_learning_materials__material_id__marks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Video Marks Api Video Learning Materials  Material Id  Marks Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Video Marks",
+        "tags": [
+          "video-learning"
+        ]
+      },
+      "post": {
+        "operationId": "create_video_mark_api_video_learning_materials__material_id__marks_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Video Mark Api Video Learning Materials  Material Id  Marks Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Video Mark",
+        "tags": [
+          "video-learning"
+        ]
+      }
+    },
+    "/api/video-learning/materials/{material_id}/marks/{mark_id}": {
+      "delete": {
+        "operationId": "delete_video_mark_api_video_learning_materials__material_id__marks__mark_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "mark_id",
+            "required": true,
+            "schema": {
+              "title": "Mark Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Delete Video Mark Api Video Learning Materials  Material Id  Marks  Mark Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Video Mark",
+        "tags": [
+          "video-learning"
+        ]
+      },
+      "get": {
+        "operationId": "get_video_mark_api_video_learning_materials__material_id__marks__mark_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "mark_id",
+            "required": true,
+            "schema": {
+              "title": "Mark Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Video Mark Api Video Learning Materials  Material Id  Marks  Mark Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Video Mark",
+        "tags": [
+          "video-learning"
+        ]
+      },
+      "patch": {
+        "operationId": "update_video_mark_api_video_learning_materials__material_id__marks__mark_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "mark_id",
+            "required": true,
+            "schema": {
+              "title": "Mark Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Video Mark Api Video Learning Materials  Material Id  Marks  Mark Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Video Mark",
         "tags": [
           "video-learning"
         ]

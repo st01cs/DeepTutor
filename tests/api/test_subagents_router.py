@@ -64,11 +64,11 @@ class _FakeKBManager:
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     manager = _FakeKBManager()
-    monkeypatch.setattr(subagents_module, "current_kb_manager", lambda: manager)
+    monkeypatch.setattr(subagents_module, "account_kb_manager", lambda: manager)
     monkeypatch.setattr(
         subagents_module,
         "list_backend_kinds",
-        lambda: ["claude_code", "codex", "hermes_remote", "partner"],
+        lambda: ["claude_code", "codex", "grok", "hermes_remote", "partner"],
     )
     monkeypatch.setattr(subagents_module, "assert_path_allowed", lambda p: Path(p))
     # Isolate settings persistence to a temp file — the PUT path otherwise
@@ -122,12 +122,51 @@ def test_connect_list_and_disconnect_roundtrip(client):
     assert client.get("/api/subagents/connections").json()["connections"] == []
 
 
+def test_connections_stay_in_account_library_inside_workspace(client, monkeypatch, tmp_path):
+    def fail_current_manager():
+        raise AssertionError("connected agents must not use the workspace KB store")
+
+    monkeypatch.setattr(subagents_module, "current_kb_manager", fail_current_manager, raising=False)
+    from deeptutor.services.workspace.context import WorkspaceScope, workspace_context
+
+    scope = WorkspaceScope("ws-research", tmp_path, tmp_path / "workspace")
+    with workspace_context(scope):
+        created = client.post(
+            "/api/subagents/connections",
+            json={"name": "WorkspaceClaude", "agent_kind": "claude_code"},
+        )
+
+    assert created.status_code == 200
+    listed = client.get("/api/subagents/connections").json()["connections"]
+    assert [item["name"] for item in listed] == ["WorkspaceClaude"]
+
+
 def test_connect_rejects_unknown_kind(client):
     res = client.post(
         "/api/subagents/connections",
         json={"name": "X", "agent_kind": "bogus"},
     )
     assert res.status_code == 400
+
+
+def test_grok_connection_and_settings_roundtrip(client):
+    created = client.post(
+        "/api/subagents/connections",
+        json={"name": "MyGrok", "agent_kind": "grok", "cwd": "/tmp"},
+    )
+    assert created.status_code == 200
+    assert created.json()["agent_kind"] == "grok"
+    saved = client.put(
+        "/api/subagents/settings",
+        json={"backends": {"grok": {"model": "custom-model", "effort": "high"}}},
+    )
+    assert saved.status_code == 200
+    config = client.get("/api/subagents/settings").json()["backends"]["grok"]
+    assert config["permission_mode"] == "dontAsk"
+    assert config["model"] == "custom-model" and config["effort"] == "high"
+    assert client.get("/api/subagents/connections").json()["connections"][0]["agent_kind"] == "grok"
+    assert client.delete("/api/subagents/connections/MyGrok").status_code == 200
+    assert client.get("/api/subagents/connections").json()["connections"] == []
 
 
 def test_connect_remote_backend_does_not_persist_a_local_cwd(client):

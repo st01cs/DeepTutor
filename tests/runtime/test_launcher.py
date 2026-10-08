@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import builtins
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from types import SimpleNamespace
 
 import pytest
@@ -23,6 +25,56 @@ class _AcceptedConnection:
 
     def __exit__(self, *_args: object) -> None:
         return None
+
+
+def test_loopback_health_checks_ignore_configured_proxy(monkeypatch) -> None:
+    """A proxy must not make healthy local backend/frontend probes fail."""
+
+    def serve(status: int) -> tuple[ThreadingHTTPServer, Thread]:
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(status)
+                self.end_headers()
+
+            def log_message(self, *_args: object) -> None:
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        return server, worker
+
+    ready, ready_worker = serve(204)
+    proxy, proxy_worker = serve(502)
+    url = f"http://127.0.0.1:{ready.server_port}/health"
+    monkeypatch.setattr(
+        launcher.urlrequest,
+        "getproxies",
+        lambda: {"http": f"http://127.0.0.1:{proxy.server_port}"},
+    )
+    monkeypatch.setattr(launcher.urlrequest, "proxy_bypass", lambda _host: False)
+    monkeypatch.setattr(launcher.urlrequest, "_opener", None)
+    try:
+        # Prove this test environment really directs ordinary urllib traffic
+        # through the proxy; a false green here would miss the regression.
+        with pytest.raises(launcher.urlerror.HTTPError) as excinfo:
+            launcher.urlrequest.urlopen(url, timeout=1)
+        assert excinfo.value.code == 502
+
+        assert launcher._http_ready(url, timeout=1)
+        launcher._wait_for_http(
+            name="Backend",
+            url=url,
+            process=None,
+            timeout=2,
+            env_name=launcher.BACKEND_READY_TIMEOUT_ENV,
+            should_stop=lambda: False,
+        )
+    finally:
+        for server, worker in ((ready, ready_worker), (proxy, proxy_worker)):
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=1)
 
 
 def test_port_probe_detects_ipv6_only_loopback_listener(monkeypatch) -> None:
@@ -89,7 +141,12 @@ def test_start_does_not_create_nested_data_tree(monkeypatch, tmp_path: Path) -> 
     assert not bad_home.exists()
 
 
-def test_launcher_hands_pending_update_to_worker(tmp_path: Path) -> None:
+def test_launcher_hands_pending_update_to_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from deeptutor.services import app_update
+
+    monkeypatch.setattr(app_update, "running_under_systemd_service", lambda: False)
     store = UpdateJobStore(update_store_root(tmp_path))
     pending = store.create(current_version="1.6.1", target_version="1.7.0")
     launched: list[Path] = []
@@ -106,6 +163,29 @@ def test_launcher_hands_pending_update_to_worker(tmp_path: Path) -> None:
     assert job.id == pending.id
     assert job.status == "handoff"
     assert job.restart_home == str(tmp_path.resolve())
+
+
+def test_launcher_keeps_systemd_service_running_for_pending_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from deeptutor.services import app_update
+
+    store = UpdateJobStore(update_store_root(tmp_path))
+    store.create(current_version="1.6.1", target_version="1.7.0")
+    monkeypatch.setattr(app_update, "running_under_systemd_service", lambda: True)
+    launched: list[Path] = []
+
+    assert (
+        launcher._handoff_pending_update(
+            tmp_path,
+            restart_argv=["start", "--home", str(tmp_path.resolve())],
+            worker_launcher=launched.append,
+        )
+        is False
+    )
+    assert launched == []
+    assert store.load().status == "failed"
+    assert not store.active_path.exists()
 
 
 def test_launcher_completes_update_only_after_restart(tmp_path: Path) -> None:
@@ -728,8 +808,8 @@ def test_ready_timeout_failure_names_the_override(monkeypatch) -> None:
     monkeypatch.setattr(launcher.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(launcher.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
-        launcher.urlrequest,
-        "urlopen",
+        launcher._LOOPBACK_OPENER,
+        "open",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("refused")),
     )
 
@@ -798,3 +878,52 @@ def test_windows_children_and_console_tools_allocate_no_console(
 class _NoopThread:
     def start(self) -> None:
         return None
+
+
+@pytest.mark.parametrize("probe", ["netstat", "tasklist", "lsof", "ps"])
+def test_process_probes_tolerate_non_utf8_output(monkeypatch, probe: str) -> None:
+    """A localized utility must not crash or hide a listener in UTF-8 mode."""
+    import subprocess
+    import sys
+
+    run = subprocess.run
+    outputs = {
+        "netstat": b"\xbb localized heading\n  TCP  127.0.0.1:3782  0.0.0.0:0  LISTENING  123\n",
+        "tasklist": b'"python.exe","123","\xbb session","1","0 K"\n',
+        "lsof": b"\xbb diagnostic\np123\n",
+        "ps": b"node next-server \xbb\n",
+    }
+
+    for name in outputs:
+        if name != probe:
+            outputs[name] = outputs[name].replace(b"\xbb", b"localized")
+
+    def run_probe(args, **kwargs):
+        # Use a real child pipe, with UTF-8 decoding as in the reported crash.
+        kwargs["encoding"] = "utf-8"
+        return run(
+            [sys.executable, "-c", f"import sys; sys.stdout.buffer.write({outputs[args[0]]!r})"],
+            **kwargs,
+        )
+
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: name)
+    monkeypatch.setattr(launcher.subprocess, "run", run_probe)
+    if probe in {"netstat", "tasklist"}:
+        assert launcher._port_listeners_windows(3782) == [(123, "python.exe")]
+    else:
+        monkeypatch.setattr(launcher, "os", SimpleNamespace(name="posix"))
+        if probe == "lsof":
+            assert launcher._port_listeners(3782) == [(123, "node next-server localized")]
+        else:
+            assert launcher._process_command(123) == "node next-server \ufffd"
+
+
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+def test_port_listeners_tolerate_missing_stdout(monkeypatch, platform: str) -> None:
+    """A failed subprocess reader may leave stdout unset on Windows."""
+    monkeypatch.setattr(launcher, "os", SimpleNamespace(name=platform))
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: name)
+    monkeypatch.setattr(
+        launcher.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=None)
+    )
+    assert launcher._port_listeners(3782) == []

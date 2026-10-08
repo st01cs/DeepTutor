@@ -9,7 +9,7 @@ import {
 import { learningLibrary, libraryItemKey } from "@/lib/learning-library";
 import { activeWorkspaceId, scopedUrl } from "@/lib/workspace-scope";
 import { useLearningCreation, requestedLearningCreation, useLibraryFilter } from "@/components/learning/LibraryWorkspace";
-import { readingCollectionRoute } from "@/lib/learning-routes";
+import { readingCollectionRoute, readingFolderRoute } from "@/lib/learning-routes";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -18,6 +18,7 @@ import {
   Loader2,
   MoreHorizontal,
   Search,
+  Star,
   Trash2,
   X,
 } from "lucide-react";
@@ -69,7 +70,7 @@ export function MaterialLibraryPage() {
   const router = useRouter();
   const [showUpload, setShowUpload] = useState(requestedLearningCreation);
   const creation = useLearningCreation(() => setShowUpload(true));
-  const { rows: materials, control } = useLibraryFilter(allMaterials);
+  const { rows: materials, picker } = useLibraryFilter(allMaterials);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [assignFor, setAssignFor] = useState<ReadingLibraryMaterial | null>(
     null
@@ -142,7 +143,6 @@ export function MaterialLibraryPage() {
       onAction={creation.begin}
     >
       {creation.dialog}
-      {control}
       <div className="mt-5 flex flex-col gap-3 border-b border-[var(--border)] pb-3 sm:flex-row sm:items-center">
         <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[var(--border)] px-2.5 sm:max-w-[330px]">
           <Search
@@ -165,9 +165,12 @@ export function MaterialLibraryPage() {
             </button>
           )}
         </label>
-        <span className="text-[11px] text-[var(--muted-foreground)] sm:ml-auto">
-          {t("{{count}} materials", { count: tally.all })}
-        </span>
+        <div className="flex items-center gap-2 sm:ml-auto">
+          {picker}
+          <span className="text-[11px] text-[var(--muted-foreground)]">
+            {t("{{count}} materials", { count: tally.all })}
+          </span>
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -355,6 +358,7 @@ function MaterialRow({
   const preparing =
     material.status === "processing" || material.status === "queued";
   const failed = material.status === "failed";
+  const quizStars = material.quiz_stars ?? 0;
 
   // The file's own identity: what it is called on disk, or where it came from.
   const identity =
@@ -405,6 +409,17 @@ function MaterialRow({
                 {t("Failed")}
               </span>
             )}
+            {quizStars > 0 && (
+              <span
+                aria-label={t("Quiz stars: {{count}}", { count: quizStars })}
+                className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+              >
+                <Star size={11} fill="currentColor" aria-hidden="true" />
+                <span aria-hidden="true" className="tabular-nums">
+                  {quizStars}
+                </span>
+              </span>
+            )}
           </span>
           {/* Narrow screens lose the type and collection columns, so those
               facts lead the second line: they are short and certain, while the
@@ -438,14 +453,15 @@ function MaterialRow({
         <span className="hidden min-w-0 items-center gap-1 sm:flex">
           {collections.length ? (
             <>
-              {/* The first chip takes the room the second one leaves, so a
-                  single membership reads in full and two share the column. */}
+              {/* The first chip may shrink into the room the second one
+                  leaves, so a long title truncates before the second is
+                  pushed out — but it never grows past its own title. */}
               {collections.slice(0, 2).map((row, index) => (
                 <Link
                   key={row.workspace_id}
-                  href={readingCollectionRoute(row.workspace_id, material.content_workspace_id ?? "")}
+                  href={readingFolderRoute(row.workspace_id, material.content_workspace_id ?? "")}
                   className={`min-w-0 truncate rounded-full border border-[var(--border)] px-2 py-0.5 text-[10.5px] hover:border-[var(--primary)] hover:text-[var(--primary)] ${
-                    index === 0 ? "flex-1" : "max-w-[96px] shrink-0"
+                    index === 0 ? "shrink" : "max-w-[96px] shrink-0"
                   }`}
                 >
                   {row.title}

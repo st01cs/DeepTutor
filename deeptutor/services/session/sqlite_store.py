@@ -112,6 +112,14 @@ _GRADED_RESULT_SQL = "COALESCE(NULLIF(n.result,''),'graded') NOT IN ('ungraded',
 _GRADED_RESULT_SQL_UNALIASED = (
     "COALESCE(NULLIF(result,''),'graded') NOT IN ('ungraded','voided','')"
 )
+# An entry whose session sits in the recycle bin is hidden from the question
+# bank until the session is restored. ``{entries}`` names the notebook_entries
+# alias of the surrounding query, so every listing, count and chip applies the
+# same rule.
+_NOT_RECYCLED_ENTRY_SQL = (
+    "NOT EXISTS (SELECT 1 FROM sessions s"
+    " WHERE s.id = {entries}.session_id AND s.deleted_at IS NOT NULL)"
+)
 ACTIVE_TURN_STATUSES = frozenset({"queued", "running", "waiting_input"})
 TERMINAL_TURN_STATUSES = frozenset({"completed", "failed", "cancelled"})
 ALL_TURN_STATUSES = ACTIVE_TURN_STATUSES | TERMINAL_TURN_STATUSES
@@ -410,7 +418,8 @@ class SQLiteSessionStore:
                     mastery_path_id TEXT NOT NULL DEFAULT '',
                     knowledge_point_id TEXT NOT NULL DEFAULT '',
                     occurred_at REAL NOT NULL,
-                    assessment_json TEXT NOT NULL
+                    assessment_json TEXT NOT NULL,
+                    linked_applied INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_assessment_attempts_session_time
@@ -426,6 +435,14 @@ class SQLiteSessionStore:
                     question_json TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     PRIMARY KEY (material_id, locator, question_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS reading_quiz_rewards (
+                    material_id TEXT NOT NULL,
+                    locator INTEGER NOT NULL,
+                    stars INTEGER NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (material_id, locator)
                 );
 
                 CREATE TABLE IF NOT EXISTS notebook_categories (
@@ -494,6 +511,7 @@ class SQLiteSessionStore:
             self._migrate_notebook_entries_add_assessment_v2(conn)
             self._migrate_notebook_entry_origins(conn)
             self._migrate_assessment_attempt_origins(conn)
+            self._migrate_assessment_attempt_link_state(conn)
             self._migrate_turn_runtime_columns(conn)
             from deeptutor.services.practice.storage import initialize_practice
 
@@ -809,6 +827,17 @@ class SQLiteSessionStore:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reading_quiz_rewards (
+                material_id TEXT NOT NULL,
+                locator INTEGER NOT NULL,
+                stars INTEGER NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY (material_id, locator)
+            )
+            """
+        )
 
     @staticmethod
     def _migrate_notebook_entry_origins(conn: sqlite3.Connection) -> None:
@@ -1010,7 +1039,8 @@ class SQLiteSessionStore:
                     mastery_path_id TEXT NOT NULL DEFAULT '',
                     knowledge_point_id TEXT NOT NULL DEFAULT '',
                     occurred_at REAL NOT NULL,
-                    assessment_json TEXT NOT NULL
+                    assessment_json TEXT NOT NULL,
+                    linked_applied INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
@@ -1050,6 +1080,22 @@ class SQLiteSessionStore:
             raise
         finally:
             conn.execute("PRAGMA foreign_keys = ON")
+
+    @staticmethod
+    def _migrate_assessment_attempt_link_state(conn: sqlite3.Connection) -> None:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(assessment_attempts)").fetchall()
+        }
+        if "linked_applied" not in columns:
+            conn.execute(
+                "ALTER TABLE assessment_attempts ADD COLUMN linked_applied INTEGER NOT NULL DEFAULT 0"
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assessment_attempts_pending_link "
+            "ON assessment_attempts(occurred_at) WHERE linked_applied = 0 "
+            "AND mastery_path_id != '' AND knowledge_point_id != '' "
+            "AND source != 'mastery_path' AND result NOT IN ('ungraded', 'voided')"
+        )
 
     async def _run(self, fn, *args):
         async with self._lock:
@@ -1388,6 +1434,23 @@ class SQLiteSessionStore:
 
     async def list_active_turns(self, session_id: str) -> list[dict[str, Any]]:
         return await self._run(self._list_active_turns_sync, session_id)
+
+    def _list_orphaned_failed_turns_sync(self, session_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.*, 0 AS last_seq
+                FROM turns t
+                WHERE t.session_id = ? AND t.status = 'failed'
+                  AND t.assistant_message_id IS NULL
+                ORDER BY t.created_at, t.id
+                """,
+                (session_id,),
+            ).fetchall()
+        return [self._serialize_turn(row) for row in rows]
+
+    async def list_orphaned_failed_turns(self, session_id: str) -> list[dict[str, Any]]:
+        return await self._run(self._list_orphaned_failed_turns_sync, session_id)
 
     def _list_nonterminal_turns_sync(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -2714,6 +2777,7 @@ class SQLiteSessionStore:
 
         match_condition = r"""
             s.id NOT LIKE 'imported\_%' ESCAPE '\'
+            AND s.deleted_at IS NULL
             AND (
                 INSTR(LOWER(COALESCE(s.title, '')), LOWER(?)) > 0
                 OR EXISTS (
@@ -2959,150 +3023,155 @@ class SQLiteSessionStore:
             raise ValueError(f"{origin_type} question origins require origin_ref")
         return navigation_session, origin_type, origin_ref
 
-    def _upsert_notebook_entries_sync(
+    def _upsert_notebook_entries_in_conn(
         self,
+        conn: sqlite3.Connection,
         session_id: str | None,
         items: list[dict[str, Any]],
     ) -> int:
         if not items:
             return 0
         now = time.time()
-        with self._connect() as conn:
-            upserted = 0
-            for item in items:
-                navigation_session, origin_type, origin_ref = self._notebook_origin(
-                    session_id, item
-                )
-                if navigation_session is not None and (
-                    conn.execute(
-                        "SELECT id FROM sessions WHERE id = ?", (navigation_session,)
-                    ).fetchone()
-                    is None
-                ):
-                    raise ValueError(f"Session not found: {navigation_session}")
-                question = (item.get("question") or "").strip()
-                question_id = (item.get("question_id") or "").strip()
-                if not question or not question_id:
-                    continue
-                turn_id = (item.get("turn_id") or "").strip()
-                # ``user_answer_images`` is an optional list of records
-                # ``[{id, url, filename, mime_type}, …]``. We serialise it
-                # here so callers that only know about text don't need to
-                # know JSON. ``None`` keeps the existing column value on
-                # UPDATE (avoid clobbering stored images on a partial
-                # upsert that only changes ``is_correct``).
-                images_value = item.get("user_answer_images")
-                images_json = _json_dumps(images_value) if isinstance(images_value, list) else None
-                source = str(item.get("source") or "deep_question")
-                if source not in ASSESSMENT_SOURCES:
-                    source = "deep_question"
-                is_correct = 1 if item.get("is_correct") else 0
-                existing = conn.execute(
-                    """
-                    SELECT is_correct FROM notebook_entries
-                    WHERE origin_type = ? AND origin_ref = ?
-                      AND turn_id = ? AND question_id = ?
-                    """,
-                    (origin_type, origin_ref, turn_id, question_id),
-                ).fetchone()
-                previous = bool(existing["is_correct"]) if existing is not None else None
-                if previous is None or previous == bool(is_correct):
-                    score_trend = "new" if previous is None else "unchanged"
-                else:
-                    score_trend = "improved" if is_correct else "declined"
-                provenance = (
-                    source,
-                    str(item.get("material_id") or ""),
-                    str(item.get("material_title") or ""),
-                    str(item.get("section_id") or ""),
-                    str(item.get("section_title") or ""),
-                    score_trend,
-                )
-                assessment = self._notebook_assessment_values(item, is_correct)
-                resolved_on_insert = (
-                    0
-                    if assessment[1] == "ungraded"
-                    else 1
-                    if assessment[1] == "voided" or is_correct
-                    else 0
-                )
+        upserted = 0
+        for item in items:
+            navigation_session, origin_type, origin_ref = self._notebook_origin(session_id, item)
+            if navigation_session is not None and (
                 conn.execute(
-                    """
-                    INSERT INTO notebook_entries (
-                        session_id, origin_type, origin_ref, turn_id, question_id,
-                        question, question_type, options_json, correct_answer,
-                        explanation, difficulty, user_answer,
-                        user_answer_images_json, source, material_id,
-                        material_title, section_id, section_title, score_trend,
-                        assessment_type, result, mastery_path_id, knowledge_point_id,
-                        attempt_count, hints_used, confidence, response_time, quality,
-                        is_correct, resolved, bookmarked, followup_session_id,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?, ?)
-                    ON CONFLICT(origin_type, origin_ref, turn_id, question_id) DO UPDATE SET
-                        session_id = excluded.session_id,
-                        question = excluded.question,
-                        question_type = excluded.question_type,
-                        options_json = excluded.options_json,
-                        correct_answer = excluded.correct_answer,
-                        explanation = excluded.explanation,
-                        difficulty = excluded.difficulty,
-                        user_answer = excluded.user_answer,
-                        user_answer_images_json = CASE
-                            WHEN ? THEN notebook_entries.user_answer_images_json
-                            ELSE excluded.user_answer_images_json
-                        END,
-                        source = excluded.source,
-                        material_id = excluded.material_id,
-                        material_title = excluded.material_title,
-                        section_id = excluded.section_id,
-                        section_title = excluded.section_title,
-                        score_trend = excluded.score_trend,
-                        assessment_type = excluded.assessment_type,
-                        result = excluded.result,
-                        mastery_path_id = excluded.mastery_path_id,
-                        knowledge_point_id = excluded.knowledge_point_id,
-                        attempt_count = excluded.attempt_count,
-                        hints_used = excluded.hints_used,
-                        confidence = excluded.confidence,
-                        response_time = excluded.response_time,
-                        quality = excluded.quality,
-                        is_correct = excluded.is_correct,
-                        resolved = CASE
-                            WHEN excluded.result = 'ungraded' THEN notebook_entries.resolved
-                            WHEN excluded.result = 'voided' THEN 1
-                            WHEN excluded.is_correct = 1 THEN 1
-                            WHEN excluded.is_correct = 0 AND notebook_entries.is_correct = 1 THEN 0
-                            ELSE notebook_entries.resolved
-                        END,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        navigation_session,
-                        origin_type,
-                        origin_ref,
-                        turn_id,
-                        question_id,
-                        question,
-                        item.get("question_type") or "",
-                        _json_dumps(item.get("options") or {}),
-                        item.get("correct_answer") or "",
-                        item.get("explanation") or "",
-                        item.get("difficulty") or "",
-                        item.get("user_answer") or "",
-                        images_json if images_json is not None else "[]",
-                        *provenance,
-                        *assessment,
-                        is_correct,
-                        resolved_on_insert,
-                        now,
-                        now,
-                        images_json is None,
-                    ),
-                )
-                upserted += 1
-            conn.commit()
+                    "SELECT id FROM sessions WHERE id = ?", (navigation_session,)
+                ).fetchone()
+                is None
+            ):
+                raise ValueError(f"Session not found: {navigation_session}")
+            question = (item.get("question") or "").strip()
+            question_id = (item.get("question_id") or "").strip()
+            if not question or not question_id:
+                continue
+            turn_id = (item.get("turn_id") or "").strip()
+            # ``user_answer_images`` is an optional list of records
+            # ``[{id, url, filename, mime_type}, …]``. We serialise it
+            # here so callers that only know about text don't need to
+            # know JSON. ``None`` keeps the existing column value on
+            # UPDATE (avoid clobbering stored images on a partial
+            # upsert that only changes ``is_correct``).
+            images_value = item.get("user_answer_images")
+            images_json = _json_dumps(images_value) if isinstance(images_value, list) else None
+            source = str(item.get("source") or "deep_question")
+            if source not in ASSESSMENT_SOURCES:
+                source = "deep_question"
+            is_correct = 1 if item.get("is_correct") else 0
+            existing = conn.execute(
+                """
+                SELECT is_correct FROM notebook_entries
+                WHERE origin_type = ? AND origin_ref = ?
+                  AND turn_id = ? AND question_id = ?
+                """,
+                (origin_type, origin_ref, turn_id, question_id),
+            ).fetchone()
+            previous = bool(existing["is_correct"]) if existing is not None else None
+            if previous is None or previous == bool(is_correct):
+                score_trend = "new" if previous is None else "unchanged"
+            else:
+                score_trend = "improved" if is_correct else "declined"
+            provenance = (
+                source,
+                str(item.get("material_id") or ""),
+                str(item.get("material_title") or ""),
+                str(item.get("section_id") or ""),
+                str(item.get("section_title") or ""),
+                score_trend,
+            )
+            assessment = self._notebook_assessment_values(item, is_correct)
+            resolved_on_insert = (
+                0
+                if assessment[1] == "ungraded"
+                else 1
+                if assessment[1] == "voided" or is_correct
+                else 0
+            )
+            conn.execute(
+                """
+                INSERT INTO notebook_entries (
+                    session_id, origin_type, origin_ref, turn_id, question_id,
+                    question, question_type, options_json, correct_answer,
+                    explanation, difficulty, user_answer,
+                    user_answer_images_json, source, material_id,
+                    material_title, section_id, section_title, score_trend,
+                    assessment_type, result, mastery_path_id, knowledge_point_id,
+                    attempt_count, hints_used, confidence, response_time, quality,
+                    is_correct, resolved, bookmarked, followup_session_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?, ?)
+                ON CONFLICT(origin_type, origin_ref, turn_id, question_id) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    question = excluded.question,
+                    question_type = excluded.question_type,
+                    options_json = excluded.options_json,
+                    correct_answer = excluded.correct_answer,
+                    explanation = excluded.explanation,
+                    difficulty = excluded.difficulty,
+                    user_answer = excluded.user_answer,
+                    user_answer_images_json = CASE
+                        WHEN ? THEN notebook_entries.user_answer_images_json
+                        ELSE excluded.user_answer_images_json
+                    END,
+                    source = excluded.source,
+                    material_id = excluded.material_id,
+                    material_title = excluded.material_title,
+                    section_id = excluded.section_id,
+                    section_title = excluded.section_title,
+                    score_trend = excluded.score_trend,
+                    assessment_type = excluded.assessment_type,
+                    result = excluded.result,
+                    mastery_path_id = excluded.mastery_path_id,
+                    knowledge_point_id = excluded.knowledge_point_id,
+                    attempt_count = excluded.attempt_count,
+                    hints_used = excluded.hints_used,
+                    confidence = excluded.confidence,
+                    response_time = excluded.response_time,
+                    quality = excluded.quality,
+                    is_correct = excluded.is_correct,
+                    resolved = CASE
+                        WHEN excluded.result = 'ungraded' THEN notebook_entries.resolved
+                        WHEN excluded.result = 'voided' THEN 1
+                        WHEN excluded.is_correct = 1 THEN 1
+                        WHEN excluded.is_correct = 0 AND notebook_entries.is_correct = 1 THEN 0
+                        ELSE notebook_entries.resolved
+                    END,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    navigation_session,
+                    origin_type,
+                    origin_ref,
+                    turn_id,
+                    question_id,
+                    question,
+                    item.get("question_type") or "",
+                    _json_dumps(item.get("options") or {}),
+                    item.get("correct_answer") or "",
+                    item.get("explanation") or "",
+                    item.get("difficulty") or "",
+                    item.get("user_answer") or "",
+                    images_json if images_json is not None else "[]",
+                    *provenance,
+                    *assessment,
+                    is_correct,
+                    resolved_on_insert,
+                    now,
+                    now,
+                    images_json is None,
+                ),
+            )
+            upserted += 1
         return upserted
+
+    def _upsert_notebook_entries_sync(
+        self,
+        session_id: str | None,
+        items: list[dict[str, Any]],
+    ) -> int:
+        with self._connect() as conn:
+            return self._upsert_notebook_entries_in_conn(conn, session_id, items)
 
     async def upsert_notebook_entries(
         self,
@@ -3173,6 +3242,177 @@ class SQLiteSessionStore:
             notebook_entry_id,
             attempt,
         )
+
+    def _record_assessment_sync(
+        self,
+        session_id: str | None,
+        item: dict[str, Any],
+        attempt: dict[str, Any],
+    ) -> tuple[int, bool, bool]:
+        """Commit the evidence event and its latest-card projection together.
+
+        The event is inserted first inside the transaction. A retry with the
+        same submission id leaves the latest card alone, even if a newer
+        attempt has since changed it.
+        """
+        attempt_id = str(attempt.get("attempt_id") or "").strip()
+        question_id = str(attempt.get("question_id") or "").strip()
+        if not attempt_id or not question_id:
+            raise ValueError("attempt_id and question_id are required")
+        navigation_session, origin_type, origin_ref = self._notebook_origin(session_id, attempt)
+        turn_id = str(attempt.get("turn_id") or "").strip()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT assessment_json, notebook_entry_id FROM assessment_attempts "
+                "WHERE attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()
+            if existing is not None:
+                original = _json_loads(str(existing["assessment_json"]), {})
+                identity_fields = (
+                    "origin_type",
+                    "origin_ref",
+                    "turn_id",
+                    "question_id",
+                    "source",
+                    "assessment_type",
+                    "user_answer",
+                    "result",
+                    "mastery_path_id",
+                    "knowledge_point_id",
+                )
+                if any(original.get(key) != attempt.get(key) for key in identity_fields):
+                    raise ValueError(f"Conflicting assessment submission id: {attempt_id}")
+                entry_id = existing["notebook_entry_id"]
+                if entry_id is None:
+                    row = conn.execute(
+                        "SELECT id FROM notebook_entries WHERE origin_type = ? "
+                        "AND origin_ref = ? AND turn_id = ? AND question_id = ?",
+                        (origin_type, origin_ref, turn_id, question_id),
+                    ).fetchone()
+                    entry_id = row["id"] if row is not None else None
+                return int(entry_id) if entry_id is not None else 0, False, False
+
+            if (
+                navigation_session is not None
+                and conn.execute(
+                    "SELECT id FROM sessions WHERE id = ?", (navigation_session,)
+                ).fetchone()
+                is None
+            ):
+                raise ValueError(f"Session not found: {navigation_session}")
+            if str(attempt.get("source") or "") == "immersive_reading":
+                row = conn.execute(
+                    "SELECT COUNT(*) AS count FROM assessment_attempts "
+                    "WHERE origin_type = ? AND origin_ref = ? AND turn_id = ? AND question_id = ?",
+                    (origin_type, origin_ref, turn_id, question_id),
+                ).fetchone()
+                count = int(row["count"]) + 1
+                item = {**item, "attempt_count": count}
+                attempt = {**attempt, "attempt_count": count}
+            latest = conn.execute(
+                "SELECT occurred_at, attempt_id FROM assessment_attempts "
+                "WHERE origin_type = ? AND origin_ref = ? AND turn_id = ? AND question_id = ? "
+                "ORDER BY occurred_at DESC, attempt_id DESC LIMIT 1",
+                (origin_type, origin_ref, turn_id, question_id),
+            ).fetchone()
+            occurred_at = float(attempt.get("occurred_at") or time.time())
+            is_latest = latest is None or (occurred_at, attempt_id) >= (
+                float(latest["occurred_at"]),
+                str(latest["attempt_id"]),
+            )
+            conn.execute(
+                """
+                INSERT INTO assessment_attempts (
+                    attempt_id, notebook_entry_id, session_id, origin_type,
+                    origin_ref, turn_id, question_id, source, assessment_type, result,
+                    mastery_path_id, knowledge_point_id, occurred_at,
+                    assessment_json
+                ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attempt_id,
+                    navigation_session,
+                    origin_type,
+                    origin_ref,
+                    turn_id,
+                    question_id,
+                    str(attempt.get("source") or "deep_question"),
+                    str(attempt.get("assessment_type") or "quiz"),
+                    str(attempt.get("result") or "ungraded"),
+                    str(attempt.get("mastery_path_id") or ""),
+                    str(attempt.get("knowledge_point_id") or ""),
+                    occurred_at,
+                    _json_dumps(attempt),
+                ),
+            )
+            upserted = (
+                self._upsert_notebook_entries_in_conn(conn, session_id, [item]) if is_latest else 0
+            )
+            row = conn.execute(
+                "SELECT id FROM notebook_entries WHERE origin_type = ? "
+                "AND origin_ref = ? AND turn_id = ? AND question_id = ?",
+                (origin_type, origin_ref, turn_id, question_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Assessment projection was not persisted")
+            entry_id = int(row["id"])
+            conn.execute(
+                "UPDATE assessment_attempts SET notebook_entry_id = ? WHERE attempt_id = ?",
+                (entry_id, attempt_id),
+            )
+        return entry_id, bool(upserted), True
+
+    async def record_assessment(
+        self,
+        session_id: str | None,
+        item: dict[str, Any],
+        attempt: dict[str, Any],
+    ) -> tuple[int, bool, bool]:
+        """Atomically append one assessment and refresh its Question Bank card."""
+        return await self._run(self._record_assessment_sync, session_id, item, attempt)
+
+    def _get_assessment_attempt_sync(self, attempt_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT assessment_json FROM assessment_attempts WHERE attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        value = _json_loads(str(row["assessment_json"]), {})
+        return value if isinstance(value, dict) else None
+
+    async def get_assessment_attempt(self, attempt_id: str) -> dict[str, Any] | None:
+        return await self._run(self._get_assessment_attempt_sync, attempt_id)
+
+    def _mark_assessment_link_applied_sync(self, attempt_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE assessment_attempts SET linked_applied = 1 WHERE attempt_id = ?",
+                (attempt_id,),
+            )
+
+    async def mark_assessment_link_applied(self, attempt_id: str) -> None:
+        await self._run(self._mark_assessment_link_applied_sync, attempt_id)
+
+    def _pending_linked_assessments_sync(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT assessment_json FROM assessment_attempts WHERE linked_applied = 0 "
+                "AND mastery_path_id != '' AND knowledge_point_id != '' "
+                "AND source != 'mastery_path' AND result NOT IN ('ungraded', 'voided') "
+                "ORDER BY occurred_at, attempt_id"
+            ).fetchall()
+        return [
+            value
+            for row in rows
+            if isinstance(value := _json_loads(str(row["assessment_json"]), {}), dict)
+        ]
+
+    async def pending_linked_assessments(self) -> list[dict[str, Any]]:
+        return await self._run(self._pending_linked_assessments_sync)
 
     def _list_assessment_attempts_sync(
         self,
@@ -3286,6 +3526,142 @@ class SQLiteSessionStore:
             None if question_ids is None else tuple(question_ids),
         )
 
+    def _best_reading_quiz_results_sync(
+        self, material_id: str, locator: int, question_ids: Sequence[str]
+    ) -> dict[str, dict[str, bool]]:
+        material = str(material_id or "").strip()
+        section = str(int(locator))
+        wanted = list(dict.fromkeys(str(qid).strip() for qid in question_ids if str(qid).strip()))
+        if not material or not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        with self._connect() as conn:
+            query = f"""
+                SELECT question_id, assessment_json FROM assessment_attempts
+                WHERE source = 'immersive_reading'
+                  AND question_id IN ({placeholders})
+                """  # nosec B608 - fixed SQL columns with bound values
+            rows = conn.execute(
+                query,
+                tuple(wanted),
+            ).fetchall()
+        results: dict[str, dict[str, bool]] = {}
+        for row in rows:
+            value = _json_loads(str(row["assessment_json"]), {})
+            if not isinstance(value, dict):
+                continue
+            if str(value.get("material_id") or "") != material:
+                continue
+            if str(value.get("section_id") or "") != section:
+                continue
+            question_id = str(row["question_id"])
+            correct = str(value.get("result") or "") == "correct"
+            current = results.setdefault(question_id, {"attempted": True, "correct": False})
+            current["correct"] = current["correct"] or correct
+        return results
+
+    async def best_reading_quiz_results(
+        self, material_id: str, locator: int, question_ids: Sequence[str]
+    ) -> dict[str, dict[str, bool]]:
+        """Return the best immutable result for each current quiz question."""
+        return await self._run(
+            self._best_reading_quiz_results_sync,
+            material_id,
+            locator,
+            tuple(question_ids),
+        )
+
+    def _upsert_reading_quiz_reward_sync(
+        self, material_id: str, locator: int, stars: int
+    ) -> dict[str, Any]:
+        material = str(material_id or "").strip()
+        normalized_locator = int(locator)
+        normalized_stars = max(1, int(stars))
+        if not material:
+            raise ValueError("material_id is required")
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT stars FROM reading_quiz_rewards WHERE material_id = ? AND locator = ?",
+                (material, normalized_locator),
+            ).fetchone()
+            previous = int(row["stars"]) if row is not None else 0
+            awarded = normalized_stars > previous
+            conn.execute(
+                """
+                INSERT INTO reading_quiz_rewards (
+                    material_id, locator, stars, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(material_id, locator) DO UPDATE SET
+                    stars = excluded.stars,
+                    updated_at = excluded.updated_at
+                WHERE excluded.stars > reading_quiz_rewards.stars
+                """,
+                (material, normalized_locator, normalized_stars, now),
+            )
+            conn.commit()
+        return {
+            "locator": normalized_locator,
+            "stars": max(normalized_stars, previous),
+            "updated_at": now,
+            "awarded": awarded,
+        }
+
+    async def upsert_reading_quiz_reward(
+        self, material_id: str, locator: int, stars: int
+    ) -> dict[str, Any]:
+        """Raise, never lower, a chapter's server-owned star watermark."""
+        return await self._run(self._upsert_reading_quiz_reward_sync, material_id, locator, stars)
+
+    def _list_reading_quiz_rewards_sync(self, material_id: str) -> list[dict[str, Any]]:
+        material = str(material_id or "").strip()
+        if not material:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT locator, stars, updated_at FROM reading_quiz_rewards "
+                "WHERE material_id = ? ORDER BY locator",
+                (material,),
+            ).fetchall()
+        return [
+            {
+                "locator": int(row["locator"]),
+                "stars": int(row["stars"]),
+                "updated_at": float(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
+    async def list_reading_quiz_rewards(self, material_id: str) -> list[dict[str, Any]]:
+        return await self._run(self._list_reading_quiz_rewards_sync, material_id)
+
+    def _reading_quiz_reward_totals_sync(self, material_ids: Sequence[str]) -> dict[str, int]:
+        wanted = list(
+            dict.fromkeys(
+                str(material_id).strip() for material_id in material_ids if str(material_id).strip()
+            )
+        )
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        with self._connect() as conn:
+            query = f"""
+                SELECT material_id, SUM(stars) AS stars
+                FROM reading_quiz_rewards
+                WHERE material_id IN ({placeholders})
+                GROUP BY material_id
+                """  # nosec B608 - fixed SQL columns with bound values
+            rows = conn.execute(
+                query,
+                tuple(wanted),
+            ).fetchall()
+        return {str(row["material_id"]): int(row["stars"]) for row in rows}
+
+    async def reading_quiz_reward_totals(self, material_ids: Sequence[str]) -> dict[str, int]:
+        """Return total reward stars for a library page in one query."""
+        return await self._run(self._reading_quiz_reward_totals_sync, tuple(material_ids))
+
     @staticmethod
     def _serialize_notebook_entry(row: sqlite3.Row) -> dict[str, Any]:
         keys = set(row.keys())
@@ -3367,14 +3743,7 @@ class SQLiteSessionStore:
         conditions: list[str] = []
         params: list[Any] = []
 
-        conditions.append(
-            """
-            NOT EXISTS (
-                SELECT 1 FROM sessions s
-                WHERE s.id = n.session_id AND s.deleted_at IS NOT NULL
-            )
-            """
-        )
+        conditions.append(_NOT_RECYCLED_ENTRY_SQL.format(entries="n"))
         if query.mistakes_only:
             conditions.append(
                 "EXISTS (SELECT 1 FROM practice_review_state r WHERE r.entry_id = n.id AND r.is_mistake = 1)"
@@ -3593,11 +3962,11 @@ class SQLiteSessionStore:
             # not scope", empty means "scoped to nothing". The rail's counts sit
             # beside the list, so anything the list excludes must not be counted
             # here either.
-            where = ""
+            where = "WHERE " + _NOT_RECYCLED_ENTRY_SQL.format(entries="notebook_entries")
             params: list[str] = []
             if session_ids is not None:
                 placeholders = ",".join("?" for _ in session_ids) or "NULL"
-                where = f"WHERE session_id IN ({placeholders})"
+                where += f" AND session_id IN ({placeholders})"
                 params = list(session_ids)
             row = conn.execute(
                 f"""
@@ -3661,7 +4030,9 @@ class SQLiteSessionStore:
         self,
         session_ids: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
-        where = "material_id != ''"
+        where = "material_id != '' AND " + _NOT_RECYCLED_ENTRY_SQL.format(
+            entries="notebook_entries"
+        )
         params: list[str] = []
         if session_ids is not None:
             placeholders = ",".join("?" for _ in session_ids) or "NULL"
@@ -3875,7 +4246,8 @@ class SQLiteSessionStore:
         # created still exists inside a course that has not filled it yet, and
         # dropping the row would make it look deleted. Hence the condition rides
         # on the join instead of a WHERE clause.
-        join = "LEFT JOIN notebook_entries e ON e.id = ec.entry_id"
+        not_recycled = _NOT_RECYCLED_ENTRY_SQL.format(entries="e")
+        join = f"LEFT JOIN notebook_entries e ON e.id = ec.entry_id AND {not_recycled}"
         params: list[str] = []
         if session_ids is not None:
             placeholders = ",".join("?" for _ in session_ids) or "NULL"

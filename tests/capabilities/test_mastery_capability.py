@@ -140,6 +140,28 @@ def test_announced_but_unposed_question_is_redirected():
 @pytest.mark.parametrize(
     "reply",
     [
+        "所以这条 KP 我要考的不是「README 该有哪些章节」——那部分你已经做对了。"
+        "是排序和取舍：给那个不跑项目的读者，第一样该补什么。四个选项，选一个。",
+        "Four options, choose one.",
+    ],
+)
+def test_unposted_choice_lead_in_requires_a_card(reply: str) -> None:
+    """#1508: naming unseen choices cannot finish a mastery turn successfully."""
+    instruction = MasteryLoopCapability().finish_instruction(_context(), reply)
+    assert instruction is not None
+    assert "mastery_quiz" in instruction
+
+
+def test_existing_question_can_remind_learner_to_choose() -> None:
+    """A card posted in an earlier turn is still available to answer."""
+    context = _context()
+    context.extension("mastery")["quiz_awaiting_grade"] = True
+    assert MasteryLoopCapability().finish_instruction(context, "四个选项，选一个。") is None
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
         "按老规矩先探一题：凭印象选就行——这题考的是它俩的区别。",
         "那就先把探底那道题放上来——凭印象选就好。",
         "这次的卡片我直接开出来——就是探底那道。",
@@ -706,3 +728,30 @@ async def test_a_mode_switch_and_a_quiz_in_one_round_use_the_new_mode(tmp_path, 
     quiz = next(message for message in results.tool_messages if message.get("tool_call_id") == "c1")
     assert "belongs to the" not in str(quiz.get("content", "")), quiz
     assert context.metadata["mastery_session_mode"] == "study"
+
+
+@pytest.mark.parametrize(
+    "extra, expected",
+    [
+        ({}, False),
+        ({"mastery_card_answered": True}, True),
+        ({"mastery_card_grade": {"is_correct": True, "result": {"learner_answer": "A"}}}, True),
+        ({"mastery_card_grade": {}}, False),
+        ({"mastery_card_skip": {"skipped": True}}, True),
+        ({"mastery_card_skip": {}}, False),
+    ],
+)
+def test_card_turns_skip_the_kb_seed(extra: dict, expected: bool) -> None:
+    """#1624: a card pick ("A") must not be sent to the KB as a search query."""
+    context = _context()
+    context.metadata.update(extra)
+    assert MasteryLoopCapability().skip_kb_seed(context) is expected
+
+
+def test_kb_seed_is_left_alone_outside_mastery_mode() -> None:
+    context = UnifiedContext(
+        user_message="A",
+        session_id="session-1",
+        metadata={"mastery_card_answered": True},
+    )
+    assert MasteryLoopCapability().skip_kb_seed(context) is False

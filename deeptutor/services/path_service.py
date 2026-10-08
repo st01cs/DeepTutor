@@ -159,11 +159,25 @@ class PathService:
 
         if not candidate.is_file():
             return None
-        if candidate.suffix.lower() in self._PRIVATE_SUFFIXES:
+        # Markdown is a valid generated artifact (for example, an exec tool
+        # may write a report.md). Keep the private-suffix guard for settings,
+        # source, and runtime files, but let the explicit public-output
+        # allowlist below decide whether a .md artifact is readable.
+        if candidate.suffix.lower() in self._PRIVATE_SUFFIXES - {".md"}:
             return None
 
         parts = relative.parts
         if parts[:3] == ("workspace", "co-writer", "audio"):
+            return candidate
+
+        # Content-workspace runtimes write chat outputs beneath their selected
+        # workspace. Partner execution scopes therefore materialize the legacy
+        # chat shapes as ``workspace/outputs/chat/<session>/<turn>/<kind>/...``.
+        if (
+            len(parts) >= 6
+            and parts[:3] == ("workspace", "outputs", "chat")
+            and parts[5] in {"exec", "media", "cli"}
+        ):
             return candidate
 
         if (

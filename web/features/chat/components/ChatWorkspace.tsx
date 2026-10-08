@@ -1,5 +1,7 @@
 "use client";
 
+import { COMMAND_CONFIRMATION_FAILED } from "@/features/chat/transport/command-delivery";
+
 import { ResourceReuseContext, useResourceReusePolicy } from "@/components/chat/home/ResourceReuse";
 import { retainedKnowledgeBases } from "@/lib/resource-reuse";
 import { knowledgeBaseRef } from "@/lib/knowledge-helpers";
@@ -32,8 +34,10 @@ import {
   useState,
 } from "react";
 import { useChatRouteSession } from "@/features/chat/controllers/useChatRouteSession";
+import { waitForReplyLanguageSave } from "@/features/chat/controllers/reply-language-save";
 
 import {
+  AlertCircle,
   GraduationCap,
   NotebookPen,
   PenLine,
@@ -60,7 +64,7 @@ import { buildSessionActivity } from "@/components/chat/home/SessionActivityPane
 import Tooltip from "@/shared/ui/Tooltip";
 import SessionViewerPanel, {
   type SessionViewerPanelHandle,
-} from "@/components/chat/home/SessionViewerPanel";
+} from "@/components/chat/home/LazySessionViewerPanel";
 import {
   QuizFollowupProvider,
   useQuizFollowupController,
@@ -77,6 +81,8 @@ import {
   type MessageRequestSnapshot,
 } from "@/features/chat/ChatStateAdapter";
 import { useAppShell } from "@/context/AppShellContext";
+import { readStoredResponseLanguage } from "@/context/app-shell-storage";
+import { RESPONSE_LANGUAGE_OPTIONS } from "@/features/settings/store";
 
 import { WATCHING_ASK_EVENT } from "@/components/watching/WatchingPane";
 import type { FilePreviewSource } from "@/components/chat/preview/previewerFor";
@@ -285,10 +291,12 @@ export default function ChatWorkspace({
     setLLMSelection,
     setPersonaSelection,
     setResourceSelection,
+    setReplyLanguageOverride,
     sendMessage,
     cancelStreamingTurn,
     submitUserReply,
     regenerateLastMessage,
+    resendLastMessage,
     deleteTurn,
     editMessage,
     switchBranch,
@@ -302,12 +310,37 @@ export default function ChatWorkspace({
   } = useChatStateAdapter();
 
   const entrySessionId = useRef(state.sessionId);
+  const [replyLanguageSavingKey, setReplyLanguageSavingKey] = useState<string | null>(null);
+  const replyLanguageSaveRef = useRef<{ key: string; pending: Promise<void> } | null>(null);
+  const handleReplyLanguageChange = useCallback((value: string) => {
+    const language = value || null;
+    const key = state.sessionKey;
+    const pending = setReplyLanguageOverride(language);
+    replyLanguageSaveRef.current = { key, pending };
+    setReplyLanguageSavingKey(key);
+    void pending
+      .catch((error: unknown) => {
+        notify(error instanceof Error ? error.message : t("Action failed"));
+      })
+      .finally(() => {
+        if (replyLanguageSaveRef.current?.pending === pending) {
+          replyLanguageSaveRef.current = null;
+          setReplyLanguageSavingKey(null);
+        }
+      });
+  }, [setReplyLanguageOverride, state.sessionKey, t]);
 
   const resourceReuse = useResourceReusePolicy(state.sessionKey || "draft", state.messages[0]?.id);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [knowledgeBasesLoaded, setKnowledgeBasesLoaded] = useState(false);
   const availableKbNames = useMemo(
     () => new Set(knowledgeBases.map(knowledgeBaseRef)),
+    [knowledgeBases],
+  );
+  // Sent-message reference chips show the readable KB name; the snapshot
+  // stores the qualified ref, so the label is resolved through this map.
+  const kbDisplayNames = useMemo(
+    () => Object.fromEntries(knowledgeBases.map((kb) => [knowledgeBaseRef(kb), kb.name])),
     [knowledgeBases],
   );
   // A connected agent to preselect once it loads, from `?agent=<name>` on the
@@ -1894,13 +1927,28 @@ export default function ChatWorkspace({
 
   const handleSend = useCallback(
     async (content: string) => {
+      // An existing session saves its selector before the next turn starts.
+      // The composer may be used immediately after changing the dropdown.
+      if (!(await waitForReplyLanguageSave(
+        replyLanguageSaveRef.current?.key === state.sessionKey
+          ? replyLanguageSaveRef.current.pending
+          : null,
+        content,
+        (draft) => prefillInputRef.current?.(draft),
+      ))) return;
       // A turn paused on a question: what the user typed is their answer, not
       // a new message. Routing it here means the card is one way to answer,
       // not the only one — and a card that never rendered no longer strands
       // the learner with a turn they can only cancel.
       if (awaitingUserReplyRef.current) {
         if (!content.trim()) return;
-        if (await submitUserReply({ text: content })) return;
+        try {
+          if (await submitUserReply({ text: content })) return;
+        } catch {
+          notify(t(COMMAND_CONFIRMATION_FAILED), { tone: "error" });
+          prefillInputRef.current?.(content);
+          return;
+        }
         // Refused: the turn that asked is gone. Do NOT stop here. The
         // composer has already cleared the box, so returning discarded what
         // they typed — while the error told them to "send a new message",
@@ -2073,6 +2121,7 @@ export default function ChatWorkspace({
       sendMessage,
       shouldAutoScrollRef,
       state.isStreaming,
+      state.sessionKey,
       subagentBudget,
       selectedPartnerGroup,
       selectedPartner,
@@ -2178,6 +2227,10 @@ export default function ChatWorkspace({
   const handleRegenerateMessage = useCallback(() => {
     regenerateLastMessage();
   }, [regenerateLastMessage]);
+
+  const handleResendMessage = useCallback(() => {
+    resendLastMessage();
+  }, [resendLastMessage]);
 
   const handleToggleKB = useCallback(
     (name: string) => {
@@ -2439,21 +2492,22 @@ export default function ChatWorkspace({
                     conversation says which workspace's files it can see without
                     the learner opening a menu to find out. */}
                 {activeWorkspace ? (
-                  <Link
-                    href="/settings/workspace"
-                    title={activeWorkspace.path}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-lg px-1.5 py-1 text-[12.5px] text-[var(--muted-foreground)] transition hover:bg-[var(--muted)]/55 hover:text-[var(--foreground)]"
-                  >
-                    <FolderOpen size={13} strokeWidth={1.7} />
-                    <span className="max-w-[140px] truncate">
-                      {activeWorkspace.display_name}
-                    </span>
-                    <ChevronRight
-                      size={12}
-                      strokeWidth={2}
-                      className="-mr-1 opacity-60"
-                    />
-                  </Link>
+                  <Tooltip label={activeWorkspace.path} side="bottom">
+                    <Link
+                      href="/settings/workspace"
+                      className="inline-flex shrink-0 items-center gap-1 rounded-lg px-1.5 py-1 text-[12.5px] text-[var(--muted-foreground)] transition hover:bg-[var(--muted)]/55 hover:text-[var(--foreground)]"
+                    >
+                      <FolderOpen size={13} strokeWidth={1.7} />
+                      <span className="max-w-[140px] truncate">
+                        {activeWorkspace.display_name}
+                      </span>
+                      <ChevronRight
+                        size={12}
+                        strokeWidth={2}
+                        className="-mr-1 opacity-60"
+                      />
+                    </Link>
+                  </Tooltip>
                 ) : null}
                 {sessionTitleEditing ? (
                   <input
@@ -2470,22 +2524,24 @@ export default function ChatWorkspace({
                     maxLength={100}
                   />
                 ) : (
-                  <button
-                    type="button"
-                    onClick={startSessionTitleEdit}
-                    disabled={!canRenameSession}
-                    title={
-                      canRenameSession
-                        ? t("Click to rename session")
-                        : t("Start a conversation to rename")
-                    }
-                    className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-xl px-2 py-1 text-left font-serif text-[17px] font-semibold tracking-[-0.01em] text-[var(--foreground)] transition hover:bg-[var(--muted)]/55 disabled:cursor-default disabled:hover:bg-transparent"
+                  <Tooltip
+                    label={canRenameSession
+                      ? t("Click to rename session")
+                      : t("Start a conversation to rename")}
+                    side="bottom"
                   >
-                    <span className="truncate">{displaySessionTitle}</span>
-                    {canRenameSession ? (
-                      <PenLine className="h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover/title:opacity-100" />
-                    ) : null}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={startSessionTitleEdit}
+                      disabled={!canRenameSession}
+                      className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-xl px-2 py-1 text-left font-serif text-[17px] font-semibold tracking-[-0.01em] text-[var(--foreground)] transition hover:bg-[var(--muted)]/55 disabled:cursor-default disabled:hover:bg-transparent"
+                    >
+                      <span className="truncate">{displaySessionTitle}</span>
+                      {canRenameSession ? (
+                        <PenLine className="h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover/title:opacity-100" />
+                      ) : null}
+                    </button>
+                  </Tooltip>
                 )}
                 {sessionTitleSaving ? (
                   <span className="shrink-0 text-xs text-[var(--muted-foreground)]">
@@ -2609,6 +2665,8 @@ export default function ChatWorkspace({
                         language={state.language}
                         onCopyAssistantMessage={copyAssistantMessage}
                         onRegenerateMessage={handleRegenerateMessage}
+                        canResendLastTurn={state.lastTurnFailed}
+                        onResendLastTurn={handleResendMessage}
                         onConfirmOutline={handleConfirmOutline}
                         onPreviewAttachment={handlePreviewMessageAttachment}
                         onOpenConsultation={(events) => {
@@ -2637,6 +2695,9 @@ export default function ChatWorkspace({
                         }}
                         availableKbNames={
                           knowledgeBasesLoaded ? availableKbNames : undefined
+                        }
+                        kbDisplayNames={
+                          knowledgeBasesLoaded ? kbDisplayNames : undefined
                         }
                       />
                       <div
@@ -2670,6 +2731,40 @@ export default function ChatWorkspace({
                 </div>
               )}
 
+              {/* Submission failure banner (#1594): the server never received
+                 the message, so the error belongs next to the composer — not
+                 rendered as an assistant reply — with the message's text kept
+                 above, marked unsent, and retryable. */}
+              {state.submissionFailed ? (
+                <div
+                  role="alert"
+                  data-submission-error="true"
+                  className="mx-auto w-full max-w-[960px] px-6 pb-1"
+                >
+                  <div className="flex w-full items-center gap-2 rounded-xl border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-3 py-2">
+                    <AlertCircle
+                      className="h-4 w-4 shrink-0 text-[var(--destructive)]"
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 text-[12px] leading-[1.5] text-[var(--foreground)]">
+                      {state.submissionNotSaved
+                        ? t("This unsent message could not be saved in your browser. Copy it before leaving this page.")
+                        : state.submissionNeedsReview
+                        ? t("Message text was saved, but its attachments or settings could not be restored. Copy it and send again.")
+                        : t("Couldn't reach the server. Please check your connection and retry.")}
+                    </span>
+                    {!state.submissionNeedsReview ? (
+                      <button
+                        type="button"
+                        onClick={handleResendMessage}
+                        className="shrink-0 rounded-md px-2 py-1 text-[11.5px] font-medium text-[var(--foreground)] hover:bg-[var(--muted)]"
+                      >
+                        {t("Resend")}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
               <ChatComposer
                 composerRef={composerRef}
                 capMenuRef={capMenuRef}
@@ -2759,6 +2854,13 @@ export default function ChatWorkspace({
                 onPersonaSelectionChange={setPersonaSelection}
                 personaSelectorOpen={personaSelectorOpen}
                 onPersonaSelectorOpenChange={setPersonaSelectorOpen}
+                replyLanguageOverride={state.replyLanguageOverride}
+                replyLanguageOptions={RESPONSE_LANGUAGE_OPTIONS}
+                replyLanguageDefaultLabel={RESPONSE_LANGUAGE_OPTIONS.find(
+                  (option) => option.value === readStoredResponseLanguage(),
+                )?.label ?? "English"}
+                replyLanguageDisabled={replyLanguageSavingKey === state.sessionKey || state.isStreaming}
+                onReplyLanguageChange={handleReplyLanguageChange}
                 resourceCatalog={resourceCatalog}
                 resourceSelection={state.resourceSelection}
                 onResourceSelectionChange={setResourceSelection}
@@ -2836,6 +2938,7 @@ export default function ChatWorkspace({
             />
             <QuestionBankPicker
               open={showQuestionBankPicker}
+              initialSelected={selectedQuestionEntries}
               onClose={handleCloseQuestionBankPicker}
               onApply={handleApplyQuestionEntries}
             />

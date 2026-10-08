@@ -61,10 +61,13 @@ it("waits for saving, uses the server verdict, and preserves the original locato
   expect(submitReadingQuizAnswers).toHaveBeenCalledWith("material-1", {
     locator: 4,
     session_id: "",
+    submission_id: expect.any(String),
     answers: [{ question_id: "quiz-1", selected_index: 1 }],
   });
   await act(async () => {
-    finish([{ question_id: "quiz-1", is_correct: false, result: "incorrect" }]);
+    finish({
+      answers: [{ question_id: "quiz-1", is_correct: false, result: "incorrect" }],
+    });
   });
   expect(await screen.findByText("Incorrect")).toBeInTheDocument();
   expect(answer).not.toBeDisabled();
@@ -81,4 +84,25 @@ it("keeps a failed answer retryable without showing a successful grade", async (
   expect(screen.queryByText("Correct")).not.toBeInTheDocument();
   expect(answer).toHaveAttribute("aria-pressed", "false");
   expect(answer).not.toBeDisabled();
+  const firstSubmission = vi.mocked(submitReadingQuizAnswers).mock.calls[0][1].submission_id;
+  vi.mocked(submitReadingQuizAnswers).mockResolvedValueOnce({
+    answers: [{ question_id: "quiz-1", is_correct: true, result: "correct" }],
+  });
+  fireEvent.click(answer);
+  await waitFor(() => expect(submitReadingQuizAnswers).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(submitReadingQuizAnswers).mock.calls[1][1].submission_id).toBe(
+    firstSubmission,
+  );
+});
+
+it("shows the server-owned reward after the quiz is complete", async () => {
+  vi.mocked(submitReadingQuizAnswers).mockResolvedValueOnce({
+    answers: [{ question_id: "quiz-1", is_correct: true, result: "correct" }],
+    reward: { locator: 4, stars: 1, updated_at: 1, awarded: true },
+  });
+  render(<ReadingExtensionBar materialId="material-1" locator={4} onError={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Quiz me" }));
+  fireEvent.click(await screen.findByRole("button", { name: "B. Atlantic" }));
+
+  expect(await screen.findByText("Quiz stars: 1")).toBeInTheDocument();
 });

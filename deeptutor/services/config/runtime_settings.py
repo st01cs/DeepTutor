@@ -10,6 +10,7 @@ from typing import Any, Callable
 from deeptutor.services.file_io import atomic_write_json as _atomic_write_json
 from deeptutor.services.path_service import get_path_service
 
+from .image_description import normalize_image_description_model
 from .origins import normalize_origins
 
 DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
@@ -84,6 +85,7 @@ DEFAULT_AUTH_SETTINGS: dict[str, Any] = {
     "password_hash": "",
     "token_expire_hours": 24,
     "cookie_secure": False,
+    "private_login_hosts": [],
 }
 
 DEFAULT_INTEGRATIONS_SETTINGS: dict[str, Any] = {
@@ -184,6 +186,8 @@ _DEFAULT_MINERU_ENGINE: dict[str, Any] = {
     "enable_formula": True,
     "enable_table": True,
     "is_ocr": False,
+    "max_pages_per_part": 180,
+    "normalize_tiny_scans": False,
     "allow_local_model_download": False,
 }
 
@@ -243,6 +247,10 @@ _MINERU_ENGINE_KEYS = frozenset(_DEFAULT_MINERU_ENGINE.keys())
 DEFAULT_DOCUMENT_PARSING_SETTINGS: dict[str, Any] = {
     "version": 2,
     "engine": _DEFAULT_DOCUMENT_PARSING_ENGINE,
+    # Caption embedded figures with a vision model at ingest, so a text-only
+    # model reading the material can still describe its images.
+    "image_caption": False,
+    "image_description_model": None,
     "engines": {
         DOCUMENT_PARSING_ENGINE_TEXT_ONLY: _DEFAULT_TEXT_ONLY_ENGINE,
         DOCUMENT_PARSING_ENGINE_MINERU: _DEFAULT_MINERU_ENGINE,
@@ -325,6 +333,7 @@ DEFAULT_LLAMAINDEX_SETTINGS: dict[str, Any] = {
     "chunk_size": 512,
     "chunk_overlap": 50,
     "image_description_concurrency": 4,
+    "image_description_batch_size": 1,
     "image_description_timeout_seconds": 60,
 }
 
@@ -356,6 +365,9 @@ DEFAULT_LIGHTRAG_SETTINGS: dict[str, Any] = {
     "max_concurrent_files": 1,
     "llm_model_max_async": 4,
     "entity_extract_max_gleaning": 1,
+    # Maps to LightRAG's ``default_llm_timeout`` (seconds). LightRAG derives its
+    # worker execution cap as 2x this value, so 240 -> a 480s per-call ceiling.
+    "llm_timeout": 240,
     "llm_profile_id": "",
     "llm_model_id": "",
 }
@@ -430,6 +442,17 @@ def _json_object(path: Path) -> dict[str, Any]:
 
 def _string(value: Any) -> str:
     return "" if value is None else str(value).strip()
+
+
+def _host_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [item for raw in value if (item := _string(raw).lower().rstrip("."))]
+    raw = _string(value)
+    return [
+        item
+        for piece in raw.replace(";", ",").split(",")
+        if (item := piece.strip().lower().rstrip("."))
+    ]
 
 
 def _string_or_list(value: Any) -> str | list[str]:
@@ -700,6 +723,7 @@ class RuntimeSettingsService:
             "AUTH_PASSWORD_HASH": auth["password_hash"],
             "AUTH_TOKEN_EXPIRE_HOURS": str(auth["token_expire_hours"]),
             "AUTH_COOKIE_SECURE": _bool_env(auth["cookie_secure"]),
+            "AUTH_PRIVATE_LOGIN_HOSTS": ",".join(auth["private_login_hosts"]),
             "NEXT_PUBLIC_AUTH_ENABLED": _bool_env(auth["enabled"]),
             # Consumed server-side by the Next.js middleware (web/proxy.ts) at
             # request time — NOT inlined into the browser bundle. The proxy
@@ -871,6 +895,8 @@ class RuntimeSettingsService:
             payload["token_expire_hours"] = value
         if value := self._process_env_value("AUTH_COOKIE_SECURE"):
             payload["cookie_secure"] = value
+        if value := self._process_env_value("AUTH_PRIVATE_LOGIN_HOSTS"):
+            payload["private_login_hosts"] = value
         return self._normalize_auth(payload)
 
     def _apply_integrations_process_overrides(self, settings: dict[str, Any]) -> dict[str, Any]:
@@ -990,6 +1016,9 @@ class RuntimeSettingsService:
             "image_description_concurrency": _coerce_clamped_int(
                 settings.get("image_description_concurrency"), 4, 1, 16
             ),
+            "image_description_batch_size": _coerce_clamped_int(
+                settings.get("image_description_batch_size"), 1, 1, 8
+            ),
             "image_description_timeout_seconds": _coerce_clamped_int(
                 settings.get("image_description_timeout_seconds"), 60, 5, 600
             ),
@@ -1039,6 +1068,7 @@ class RuntimeSettingsService:
             "entity_extract_max_gleaning": _coerce_clamped_int(
                 settings.get("entity_extract_max_gleaning"), 1, 0, 5
             ),
+            "llm_timeout": _coerce_clamped_int(settings.get("llm_timeout"), 240, 60, 3600),
             "llm_profile_id": _string(settings.get("llm_profile_id"))[:128],
             "llm_model_id": _string(settings.get("llm_model_id"))[:128],
         }
@@ -1101,7 +1131,15 @@ class RuntimeSettingsService:
         if engine not in _DOCUMENT_PARSING_ENGINES:
             engine = _DEFAULT_DOCUMENT_PARSING_ENGINE
 
-        return {"version": 2, "engine": engine, "engines": engines_out}
+        return {
+            "version": 2,
+            "engine": engine,
+            "image_caption": _coerce_bool(settings.get("image_caption"), False),
+            "image_description_model": normalize_image_description_model(
+                settings.get("image_description_model")
+            ),
+            "engines": engines_out,
+        }
 
     def _normalize_mineru_engine(self, settings: dict[str, Any]) -> dict[str, Any]:
         mode = _string(settings.get("mode")).lower()
@@ -1127,6 +1165,10 @@ class RuntimeSettingsService:
             "enable_formula": _coerce_bool(settings.get("enable_formula"), True),
             "enable_table": _coerce_bool(settings.get("enable_table"), True),
             "is_ocr": _coerce_bool(settings.get("is_ocr"), False),
+            "max_pages_per_part": _coerce_clamped_int(
+                settings.get("max_pages_per_part"), 180, 1, 200
+            ),
+            "normalize_tiny_scans": _coerce_bool(settings.get("normalize_tiny_scans"), False),
             "allow_local_model_download": _coerce_bool(
                 settings.get("allow_local_model_download"), False
             ),
@@ -1274,6 +1316,7 @@ class RuntimeSettingsService:
             "password_hash": _string(settings.get("password_hash")),
             "token_expire_hours": max(1, _coerce_int(settings.get("token_expire_hours"), 24)),
             "cookie_secure": _coerce_bool(settings.get("cookie_secure"), False),
+            "private_login_hosts": _host_list(settings.get("private_login_hosts")),
         }
 
     def _normalize_integrations(self, settings: dict[str, Any]) -> dict[str, Any]:

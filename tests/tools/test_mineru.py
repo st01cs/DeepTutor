@@ -12,6 +12,7 @@ from deeptutor.services.parsing.engines.mineru import backend as mineru_backend
 from deeptutor.services.parsing.engines.mineru import cloud as mineru_cloud
 from deeptutor.services.parsing.engines.mineru import config as mineru_config
 from deeptutor.services.parsing.engines.mineru.config import MinerUConfig, MinerUError
+from deeptutor.services.parsing.engines.mineru.local import LocalParseReason, LocalParseResult
 
 # ---------------------------------------------------------------------------
 # Config resolution
@@ -68,17 +69,15 @@ def test_resolve_mineru_config_preserves_token_array(monkeypatch: pytest.MonkeyP
 def test_parse_pdf_to_workdir_dispatches_local(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from deeptutor.services.parsing.engines.mineru import local as pdf_parser
-
     pdf = tmp_path / "exam.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     out = tmp_path / "out"
 
-    def fake_local(p: str, base: str, **kwargs) -> bool:  # noqa: ANN003
+    def fake_local(p: str, base: str, **kwargs) -> LocalParseResult:  # noqa: ANN003
         (Path(base) / Path(p).stem).mkdir(parents=True, exist_ok=True)
-        return True
+        return LocalParseResult.success()
 
-    monkeypatch.setattr(pdf_parser, "parse_document_with_mineru", fake_local)
+    monkeypatch.setattr(mineru_backend, "parse_document_with_mineru_result", fake_local)
 
     workdir = mineru_backend.parse_pdf_to_workdir(pdf, out, config=MinerUConfig(mode="local"))
     assert workdir == out / "exam"
@@ -87,11 +86,13 @@ def test_parse_pdf_to_workdir_dispatches_local(
 def test_parse_pdf_to_workdir_local_failure_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from deeptutor.services.parsing.engines.mineru import local as pdf_parser
-
     pdf = tmp_path / "exam.pdf"
     pdf.write_bytes(b"%PDF-1.4")
-    monkeypatch.setattr(pdf_parser, "parse_document_with_mineru", lambda *a, **k: False)
+    monkeypatch.setattr(
+        mineru_backend,
+        "parse_document_with_mineru_result",
+        lambda *a, **k: LocalParseResult.failure(LocalParseReason.EXCEPTION, "boom"),
+    )
 
     with pytest.raises(MinerUError):
         mineru_backend.parse_pdf_to_workdir(
@@ -124,19 +125,17 @@ def test_parse_pdf_to_workdir_dispatches_cloud(
 def test_parse_document_to_workdir_dispatches_office_local(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from deeptutor.services.parsing.engines.mineru import local as local_parser
-
     docx = tmp_path / "lesson.docx"
     docx.write_bytes(b"office")
     out = tmp_path / "out"
     seen: list[str] = []
 
-    def fake_local(path: str, base: str, **_kwargs) -> bool:
+    def fake_local(path: str, base: str, **_kwargs) -> LocalParseResult:
         seen.append(Path(path).name)
         (Path(base) / Path(path).stem).mkdir(parents=True, exist_ok=True)
-        return True
+        return LocalParseResult.success()
 
-    monkeypatch.setattr(local_parser, "parse_document_with_mineru", fake_local)
+    monkeypatch.setattr(mineru_backend, "parse_document_with_mineru_result", fake_local)
 
     workdir = mineru_backend.parse_document_to_workdir(docx, out, config=MinerUConfig(mode="local"))
 
@@ -222,8 +221,6 @@ def test_parse_local_rejects_bad_configured_path(
 def test_parse_local_explains_legacy_cli_limit_for_office(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from deeptutor.services.parsing.engines.mineru import local as local_parser
-
     source = tmp_path / "lesson.docx"
     source.write_bytes(b"office")
     monkeypatch.setattr(
@@ -237,8 +234,8 @@ def test_parse_local_explains_legacy_cli_limit_for_office(
         },
     )
     monkeypatch.setattr(
-        local_parser,
-        "parse_document_with_mineru",
+        mineru_backend,
+        "parse_document_with_mineru_result",
         lambda *_args, **_kwargs: pytest.fail("legacy CLI must not run"),
     )
 
@@ -608,6 +605,68 @@ def test_parse_cloud_retries_429_with_next_token(
 
     assert (workdir / "full.md").exists()
     assert seen_auth == ["Bearer tok-a", "Bearer tok-b"]
+
+
+def test_parse_cloud_retry_budget_follows_key_pool_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    pdf = tmp_path / "exam.pdf"
+    pdf.write_bytes(b"%PDF-1.4 test")
+    seen_auth: list[str] = []
+
+    class FakeClient:
+        def __init__(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):  # noqa: ANN002
+            return False
+
+        def post(self, _path, json=None, timeout=None, headers=None):  # noqa: A002, ANN001
+            seen_auth.append((headers or {}).get("Authorization", ""))
+            if len(seen_auth) <= 2:
+                return _Resp(status=429)
+            return _Resp({"code": 0, "data": {"batch_id": "B", "file_urls": ["https://up"]}})
+
+        def get(self, _path, timeout=None, headers=None):  # noqa: ANN001
+            return _Resp(
+                {
+                    "code": 0,
+                    "data": {
+                        "extract_result": [
+                            {
+                                "file_name": "exam.pdf",
+                                "state": "done",
+                                "full_zip_url": "https://zip",
+                            }
+                        ]
+                    },
+                }
+            )
+
+    fake_httpx = SimpleNamespace(
+        Client=FakeClient,
+        put=lambda *_args, **_kwargs: _Resp(status=200),
+        get=lambda *_args, **_kwargs: _Resp(content=_zip_bytes(), status=200),
+        HTTPError=real_httpx.HTTPError,
+        HTTPStatusError=real_httpx.HTTPStatusError,
+    )
+    monkeypatch.setattr(mineru_cloud, "httpx", fake_httpx)
+
+    workdir = mineru_cloud.parse_cloud(
+        pdf,
+        tmp_path / "out",
+        MinerUConfig(mode="cloud", api_token=["tok-a", "tok-b", "tok-c"]),
+        poll_interval=0,
+        timeout=10,
+    )
+
+    assert (workdir / "full.md").exists()
+    assert seen_auth == ["Bearer tok-a", "Bearer tok-b", "Bearer tok-c"]
 
 
 def test_parse_cloud_surfaces_api_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

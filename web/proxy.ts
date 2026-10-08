@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseAuthEnabled } from "./lib/api";
 import { resolveBackendApiBase } from "./lib/backend-runtime-config";
+import { prepareBackendForwardHeaders } from "./lib/backend-forward";
 import {
   CODEX_CALLBACK_API_PATH,
   COOKIE_NAME,
@@ -10,6 +11,7 @@ import {
   isBackendPath,
   isCodexCallbackPath,
   isRetiredPagePath,
+  isWebSocketPath,
 } from "./lib/proxy-policy";
 
 // Backend base URL for `/api/*` and `/ws/*` rewrites. The container entrypoint
@@ -63,7 +65,14 @@ export function proxy(req: NextRequest): NextResponse {
   //    This keeps the URL knowledge in one place (the entrypoint + system.json)
   //    rather than baked into the frontend bundle.
   if (isBackendPath(pathname)) {
-    return NextResponse.rewrite(new URL(pathname + search, API_BASE_URL));
+    return NextResponse.rewrite(new URL(pathname + search, API_BASE_URL), {
+      request: {
+        headers: prepareBackendForwardHeaders(req.headers, {
+          allowWebSocketUpgrade:
+            req.method === "GET" && isWebSocketPath(pathname),
+        }),
+      },
+    });
   }
 
   // 2. Auth gate — multi-user mode only. Disabled by default, and never blocks
@@ -85,10 +94,11 @@ export function proxy(req: NextRequest): NextResponse {
 export const config = {
   // Run on every request except Next.js internals and the favicon. The /api/*
   // and /ws/* paths are explicitly handled above (rewritten to the backend);
-  // large knowledge create/upload requests are handled by dedicated App Router
-  // endpoints that stream directly to FastAPI. The collection handler also
-  // forwards GET because a route module owns every method at that pathname.
-  // Excluding these endpoints here is crucial:
+  // Knowledge-base creation and upload requests that carry multipart bodies
+  // are handled by dedicated App Router endpoints that stream directly to
+  // FastAPI. The browser's list call uses /api/knowledge-bases/list so it can
+  // pass through the normal backend rewrite below. Excluding multipart routes
+  // here is crucial:
   // merely entering Proxy makes Next clone and cap the multipart body.
   // the browser's /_next/image optimizer requests are excluded here, while the
   // optimizer's loopback fetch for the source image (e.g. /logo.png) is let

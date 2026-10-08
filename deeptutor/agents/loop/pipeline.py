@@ -86,7 +86,7 @@ from deeptutor.services.llm import (
     supports_tools,  # noqa: F401  (re-exported for tests)
 )
 from deeptutor.services.llm.context_window import resolve_effective_context_window
-from deeptutor.services.prompt import get_prompt_manager
+from deeptutor.services.prompt import get_prompt_manager, normalize_language
 from deeptutor.services.prompt.lookup import prompt_text as _prompt_text
 from deeptutor.tools.builtin import PARTNER_BUILTIN_TOOL_NAMES
 
@@ -105,6 +105,9 @@ KB_SEED_CHARS_PER_KB = 4000
 # tool calls ends the loop early — that is the normal exit.
 DEFAULT_MAX_ROUNDS = 8
 CONTEXT_WINDOW_GUARD_RATIO = 0.9
+# Provider image token accounting varies by model and resolution. Reserve a
+# conservative amount for each image instead of treating source pixels as free.
+IMAGE_TOKEN_GUARD_RESERVE = 4096
 _DispatchOutcome = DispatchOutcome
 
 
@@ -236,7 +239,9 @@ class AgenticLoopPipeline:
         event_stage: str = "responding",
         emit_result: bool = True,
     ) -> None:
-        self.language = "zh" if language.lower().startswith("zh") else "en"
+        # Prompt resources fall back to English; the requested output language
+        # must still reach the assembler's final language directive.
+        self.language = normalize_language(language)
         self.llm_config = get_llm_config()
         self.binding = getattr(self.llm_config, "binding", None) or "openai"
         self.model = getattr(self.llm_config, "model", None)
@@ -453,7 +458,10 @@ class AgenticLoopPipeline:
         stable_blocks, self._runtime_snapshots = self._prompt_assembler.split_for_replay(
             self._last_prompt_blocks
         )
-        return self._prompt_assembler.render(stable_blocks)
+        return self._prompt_assembler.render(
+            stable_blocks,
+            allow_user_override=not bool(context.metadata.get("reply_language_fixed")),
+        )
 
     def _build_loop_messages(
         self,
@@ -839,6 +847,29 @@ class AgenticLoopPipeline:
             if (seed := cap.pre_loop_seed(context))
         ]
         return "\n\n".join(seed for seed in seeds if seed)
+
+    def _capability_skips_kb_seed(self, context: UnifiedContext) -> bool:
+        """Let an active capability say this turn's message is not a query.
+
+        The KB seed searches the raw user message. That is right for a
+        question, and wrong for a quiz pick like "A": the search has no
+        context and short-query backends reject it (#1624). The KBs stay
+        mounted, so the model can still retrieve with a real query.
+        """
+        for cap in self._active_loop_capabilities(context):
+            hook = getattr(cap, "skip_kb_seed", None)
+            if not callable(hook):
+                continue
+            try:
+                if hook(context):
+                    return True
+            except Exception:
+                logger.warning(
+                    "kb seed hook failed for capability %s",
+                    getattr(cap, "name", "?"),
+                    exc_info=True,
+                )
+        return False
 
     def _capability_finish_instruction(self, context: UnifiedContext, final_text: str) -> str:
         """Let an active capability reject a narrow tool-less finish once.
@@ -1320,6 +1351,11 @@ class AgenticLoopPipeline:
         task_dir = Path(runtime_workspace.output_dir) if runtime_workspace is not None else task_dir
         if tool_name == "rag":
             kwargs.setdefault("mode", "hybrid")
+            from deeptutor.services.llm.capabilities import supports_vision
+
+            kwargs["_vision_supported"] = supports_vision(
+                getattr(self, "binding", ""), getattr(self, "model", None)
+            )
         elif tool_name == "kb_files":
             # The report is read by the user as much as by the model, so it is
             # written in the turn's language. Injected server-side; the tool
@@ -1444,6 +1480,8 @@ class AgenticLoopPipeline:
         kbs = self._coexisting_rag_kbs(context)
         query = (context.user_message or "").strip()
         if not kbs or not query:
+            return ""
+        if self._capability_skips_kb_seed(context):
             return ""
         if len(kbs) > KB_SEED_MAX_KBS:
             kbs = kbs[:KB_SEED_MAX_KBS]
@@ -1654,6 +1692,8 @@ class AgenticLoopPipeline:
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "text":
                         total += count_tokens(str(part.get("text") or ""))
+                    elif isinstance(part, dict) and part.get("type") == "image_url":
+                        total += IMAGE_TOKEN_GUARD_RESERVE
         return total
 
     # ---- LLM client ------------------------------------------------------

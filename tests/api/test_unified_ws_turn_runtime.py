@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -23,13 +24,16 @@ def _fake_skill_service() -> SimpleNamespace:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_runtime_skills(monkeypatch):
+def _isolate_runtime_services(monkeypatch):
     # Runtime now resolves multiple skill libraries; these turn tests use an
     # empty catalog and must not inspect the developer's real skill folders.
     monkeypatch.setattr(
         "deeptutor.services.skill.runtime.skill_sources",
         lambda **kwargs: [(_fake_skill_service(), None, "account")],
     )
+    # Title generation has its own tests. Fake turn providers must not start
+    # an unrelated online LLM call after emitting their final stream event.
+    monkeypatch.setattr(TurnRuntimeManager, "_maybe_generate_session_title", _noop_async)
 
 
 def _fake_persona_service() -> SimpleNamespace:
@@ -194,6 +198,7 @@ async def test_turn_runtime_replays_events_and_materializes_messages(
         {
             "type": "start_turn",
             "content": "hello, i'm frank",
+            "client_submission_id": "browser-submission-123",
             "session_id": None,
             "capability": None,
             "tools": [],
@@ -204,6 +209,7 @@ async def test_turn_runtime_replays_events_and_materializes_messages(
             "memory_references": ["summary"],
             "book_references": [{"book_id": "book-1", "page_ids": ["page-1"]}],
             "mastery_path_id": "path-1",
+            "mastery_answer": {"question_id": "question-1", "text": "B"},
             "config": {},
             **consultation,
         }
@@ -237,12 +243,18 @@ async def test_turn_runtime_replays_events_and_materializes_messages(
     user_row, assistant_row = detail["messages"]
     assert done_event["metadata"]["user_message_id"] == user_row["id"]
     assert done_event["metadata"]["assistant_message_id"] == assistant_row["id"]
+    assert user_row["metadata"]["client_submission_id"] == "browser-submission-123"
+    assert user_row["metadata"]["turn_id"] == turn["id"]
     assert detail["messages"][0]["metadata"]["request_snapshot"]["persona"] == "socratic"
     assert detail["messages"][0]["metadata"]["request_snapshot"]["memoryReferences"] == ["summary"]
     assert detail["messages"][0]["metadata"]["request_snapshot"]["bookReferences"] == [
         {"book_id": "book-1", "page_ids": ["page-1"]}
     ]
     assert detail["messages"][0]["metadata"]["request_snapshot"]["masteryPathId"] == "path-1"
+    assert detail["messages"][0]["metadata"]["request_snapshot"]["masteryAnswer"] == {
+        "question_id": "question-1",
+        "text": "B",
+    }
     snapshot = detail["messages"][0]["metadata"]["request_snapshot"]
     assert snapshot.get("consultPartnerId") == requested.get("consult_partner_id")
     assert snapshot.get("partnerDiscussionGroupId") == requested.get("partner_discussion_group_id")
@@ -487,8 +499,13 @@ async def test_turn_runtime_persists_llm_selection_in_turn_snapshot(
         }
     )
 
+    execution = runtime._executions[turn["id"]]
+    assert execution.task is not None
     async for _event in runtime.subscribe_turn(turn["id"], after_seq=0):
         pass
+    # A replay subscriber can observe DONE before the runner's finally block.
+    # Model-scope reset is an execution cleanup assertion, not a stream one.
+    await asyncio.wait_for(execution.task, timeout=5)
 
     detail = await store.get_session_with_messages(session["id"])
     assert detail is not None
@@ -585,7 +602,12 @@ async def test_turn_runtime_session_persona_persists_falls_back_and_clears(
     await run_turn(session["id"], {"persona": ""})
     detail = await store.get_session_with_messages(session["id"])
     assert detail["preferences"]["persona"] == ""
-    assert "persona" not in detail["messages"][4]["metadata"]["request_snapshot"]
+    cleared_snapshot = detail["messages"][4]["metadata"]["request_snapshot"]
+    assert cleared_snapshot["persona"] == ""
+    assert cleared_snapshot["config"] == {}
+    assert cleared_snapshot["enabledTools"] == []
+    assert cleared_snapshot["knowledgeBases"] == []
+    assert cleared_snapshot["memoryReferences"] == []
 
 
 @pytest.mark.asyncio
@@ -763,6 +785,7 @@ async def test_regenerate_reuses_snapshot_or_override_llm_selection(tmp_path) ->
             "request_snapshot": {
                 "content": "again",
                 "llmSelection": {"profile_id": "p-alt", "model_id": "m-alt"},
+                "masteryAnswer": {"question_id": "question-1", "text": "B"},
             }
         },
     )
@@ -772,6 +795,9 @@ async def test_regenerate_reuses_snapshot_or_override_llm_selection(tmp_path) ->
         "profile_id": "p-alt",
         "model_id": "m-alt",
     }
+
+    await runtime.regenerate_last_turn(session["id"], overrides={"replay_snapshot": True})
+    assert captured_payloads[-1]["mastery_answer"] == {"question_id": "question-1", "text": "B"}
 
     await runtime.regenerate_last_turn(
         session["id"],

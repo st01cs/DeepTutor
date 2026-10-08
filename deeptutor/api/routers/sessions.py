@@ -12,6 +12,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
 from deeptutor.learning.storage import LearningStore
+from deeptutor.reading.catalog_store import ReadingCatalogStore
+from deeptutor.response_languages import validate_reply_language_override
 from deeptutor.services.session import get_session_store, get_sqlite_session_store
 from deeptutor.services.session.organization import (
     list_all_sessions_snapshot,
@@ -26,6 +28,12 @@ from deeptutor.services.storage.attachment_store import get_attachment_store
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _turn_application_service():
+    from deeptutor.app.container import get_application_container
+
+    return get_application_container().turns
 
 
 class SessionRenameRequest(BaseModel):
@@ -51,6 +59,15 @@ class SessionOrganizationRequest(BaseModel):
     session_kind: Literal["chat", "selection_tutor", "immersive_reading"] | None = None
     pinned: bool | None = None
     archived: bool | None = None
+
+
+class SessionReplyLanguageRequest(BaseModel):
+    language: str | None
+
+    @field_validator("language")
+    @classmethod
+    def _supported_language(cls, value: str | None) -> str | None:
+        return validate_reply_language_override(value)
 
 
 class QuizResultItem(BaseModel):
@@ -156,6 +173,80 @@ def _redact_private_message_metadata(messages: list[dict[str, Any]]) -> None:
     _redact_provider_state_metadata(messages)
 
 
+def _attach_orphaned_failed_turns(
+    messages: list[dict[str, Any]], turns: list[dict[str, Any]]
+) -> None:
+    """Expose a failed turn beside its saved user row when no reply exists.
+
+    Older rows have no turn id, so the first user row written during the
+    turn is the safe fallback. A failed preflight with no saved user row is
+    deliberately omitted rather than attached to an unrelated question.
+    """
+    users = [
+        (index, message) for index, message in enumerate(messages) if message.get("role") == "user"
+    ]
+    for turn in turns:
+        turn_id = str(turn.get("turn_id") or turn.get("id") or "")
+        started = float(turn.get("created_at") or 0)
+        finished = float(turn.get("finished_at") or turn.get("updated_at") or 0)
+        match = next(
+            (
+                (index, message)
+                for index, message in users
+                if str((message.get("metadata") or {}).get("turn_id") or "") == turn_id
+            ),
+            None,
+        )
+        if match is None:
+            match = next(
+                (
+                    (index, message)
+                    for index, message in users
+                    if started <= float(message.get("created_at") or 0) <= finished
+                ),
+                None,
+            )
+        if match is None:
+            continue
+        user_index, user = match
+        next_user_index = next((index for index, _ in users if index > user_index), len(messages))
+        # A subsequent retry may have answered this same user row. Its real
+        # assistant bubble wins; showing an earlier failure beside it would
+        # tell the learner that the answered question is still broken. Legacy
+        # PocketBase rows have no parent link, so use their linear position
+        # only when the parent field is absent, and only after the failure.
+        if any(
+            message.get("role") == "assistant"
+            and (
+                (
+                    str(message.get("parent_message_id") or "") == str(user.get("id") or "")
+                    and float(message.get("created_at") or 0) >= started
+                )
+                or (
+                    "parent_message_id" not in message
+                    and user_index < index < next_user_index
+                    and float(message.get("created_at") or 0) >= finished
+                )
+            )
+            for index, message in enumerate(messages)
+        ):
+            continue
+        metadata = user.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            user["metadata"] = metadata
+        previous = metadata.get("orphaned_failed_turn")
+        if isinstance(previous, dict) and float(previous.get("finished_at") or 0) > finished:
+            continue
+        metadata["orphaned_failed_turn"] = {
+            "turn_id": turn_id,
+            "error": str(turn.get("error") or ""),
+            "failure_code": str(turn.get("failure_code") or ""),
+            "retryable": bool(turn.get("retryable")),
+            "finished_at": finished,
+        }
+
+
 def _truncate_oversized_events(
     messages: list[dict[str, Any]], limit: int = MAX_EVENT_PAYLOAD
 ) -> None:
@@ -205,6 +296,9 @@ async def get_session(session_id: str):
     session = await store.get_session_with_messages(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    _attach_orphaned_failed_turns(
+        session.get("messages", []), await store.list_orphaned_failed_turns(session_id)
+    )
     _redact_private_message_metadata(session.get("messages", []))
     _truncate_oversized_events(session.get("messages", []))
     return session
@@ -238,7 +332,28 @@ async def rename_session(session_id: str, payload: SessionRenameRequest):
     updated = await store.update_session_title(session_id, payload.title)
     if not updated:
         raise HTTPException(status_code=404, detail="Session not found")
+    # The reader keeps its own list of a collection's conversations; the
+    # sidebar is where they are renamed, so the list has to hear about it.
+    try:
+        await asyncio.to_thread(ReadingCatalogStore().retitle_session, session_id, payload.title)
+    except Exception:
+        logger.exception("failed to retitle reading conversation %s", session_id)
     session = await store.get_session(session_id)
+    return {"session": session}
+
+
+@router.patch("/{session_id}/reply-language")
+async def update_session_reply_language(session_id: str, payload: SessionReplyLanguageRequest):
+    """Fix this conversation's reply language, or return to the account default."""
+    store = get_session_store()
+    if await store.get_session(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    updated = await store.update_session_preferences(
+        session_id, {"reply_language_override": payload.language}
+    )
+    session = await store.get_session(session_id)
+    if not updated or session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
     return {"session": session}
 
 
@@ -371,12 +486,14 @@ async def delete_session(session_id: str):
 
     list_active_turns = getattr(store, "list_active_turns", None)
     if callable(list_active_turns):
-        from deeptutor.services.session import get_turn_runtime_manager
-
-        runtime = get_turn_runtime_manager()
+        turns = _turn_application_service()
         for target in ordered:
             for turn in await list_active_turns(target):
-                await runtime.cancel_turn(turn["id"])
+                if not await turns.cancel_turn_and_wait(turn["id"]):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Active conversation turn could not be stopped before deletion",
+                    )
     for target in reversed(ordered):
         if not await store.delete_session(target):
             raise HTTPException(status_code=409, detail="Unable to delete conversation")
@@ -393,6 +510,10 @@ async def _cleanup_deleted_session(session_id: str) -> None:
         await get_attachment_store().delete_session(session_id)
     except Exception:
         logger.exception("failed to clean up attachments for session %s", session_id)
+    try:
+        await asyncio.to_thread(ReadingCatalogStore().forget_session, session_id)
+    except Exception:
+        logger.exception("failed to detach reading collections for session %s", session_id)
 
 
 @router.post("/{session_id}/restore")

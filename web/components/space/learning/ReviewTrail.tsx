@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowRight, CheckCircle2, Clock3, Play } from "lucide-react";
+import Tooltip from "@/shared/ui/Tooltip";
+import { ArrowRight, CheckCircle2, Clock3, Loader2, Play } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
 
@@ -8,13 +9,23 @@ import type { TopicReview } from "@/lib/learning-api";
 
 import { formatRelative } from "./format";
 
+const RETENTION_TARGETS = [0.7, 0.8, 0.85, 0.9, 0.95, 0.97, 0.99];
+
 export function ReviewTrail({
   reviews,
+  desiredRetention,
+  retentionBusy,
+  retentionError,
+  onRetentionChange,
   zh,
   onSelect,
   onStartReview,
 }: {
   reviews: TopicReview[];
+  desiredRetention: number;
+  retentionBusy: boolean;
+  retentionError: string | null;
+  onRetentionChange: (value: number) => void;
   zh: boolean;
   onSelect: (objectiveId: string) => void;
   onStartReview: (objectiveId: string, name: string) => void;
@@ -30,19 +41,53 @@ export function ReviewTrail({
         : left.due_at - right.due_at),
   );
   const visible = expanded ? ordered : ordered.slice(0, 5);
+  const retentionTargets = RETENTION_TARGETS.includes(desiredRetention)
+    ? RETENTION_TARGETS
+    : [...RETENTION_TARGETS, desiredRetention].sort((a, b) => a - b);
   return (
-    <section className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--secondary)] px-4 py-2.5">
-        <h2
-          className="text-[12px] font-semibold text-[var(--foreground)]"
-          title={t("Scheduled by your forgetting curve")}
-        >
-          {t("Review plan")}
-        </h2>
-        <span className="text-[11px] tabular-nums text-[var(--muted-foreground)]">
-          {due.length} {t("due")}
-        </span>
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] lg:max-h-[min(30vh,260px)] lg:shrink-0">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--secondary)] px-4 py-2.5">
+        <Tooltip label={t("Scheduled by your forgetting curve")} as="div" side="top">
+          <h2 tabIndex={0} className="text-[12px] font-semibold text-[var(--foreground)]">
+            {t("Review plan")}
+          </h2>
+        </Tooltip>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-[11px] text-[var(--muted-foreground)]">
+            <span>{t("Recall target")}</span>
+            <select
+              value={desiredRetention}
+              onChange={(event) => onRetentionChange(Number(event.target.value))}
+              disabled={retentionBusy}
+              aria-describedby="review-retention-hint"
+              className="h-7 rounded-md border border-[var(--border)] bg-[var(--card)] px-1.5 text-[11px] font-medium tabular-nums text-[var(--foreground)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/40 disabled:opacity-60"
+            >
+              {retentionTargets.map((target) => (
+                <option key={target} value={target}>
+                  {Math.round(target * 1000) / 10}%
+                </option>
+              ))}
+            </select>
+          </label>
+          {retentionBusy && (
+            <span className="inline-flex items-center gap-1 text-[11px] text-[var(--muted-foreground)]">
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+              <span className="sr-only">{t("Saving…")}</span>
+            </span>
+          )}
+          <span className="text-[11px] tabular-nums text-[var(--muted-foreground)]">
+            {due.length} {t("due")}
+          </span>
+        </div>
       </div>
+      <p id="review-retention-hint" className="shrink-0 px-4 pt-2 text-[10px] text-[var(--muted-foreground)]">
+        {t("Higher targets schedule reviews sooner.")}
+      </p>
+      {retentionError && (
+        <p role="alert" className="px-4 pt-1 text-[11px] text-red-600 dark:text-red-400">
+          {retentionError}
+        </p>
+      )}
       {reviews.length === 0 ? (
         <div className="flex items-start gap-2 px-4 py-3.5 text-[12px] leading-5 text-[var(--muted-foreground)]">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--primary)]" />
@@ -51,7 +96,7 @@ export function ReviewTrail({
           )}
         </div>
       ) : (
-        <div className="p-2">
+        <div className="min-h-0 overflow-y-auto p-2">
           {visible.map((review) => (
             <div
               key={review.id}
@@ -64,7 +109,6 @@ export function ReviewTrail({
                 type="button"
                 onClick={() => onSelect(review.knowledge_point_id)}
                 className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/40"
-                title={review.reason}
               >
                 <span className="block truncate text-xs font-medium text-[var(--foreground)]">
                   {review.knowledge_point_name}

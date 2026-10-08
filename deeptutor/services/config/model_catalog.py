@@ -193,6 +193,8 @@ LLM_SHAPED_SERVICES: tuple[str, ...] = ("llm", "task")
 # built-in tables decide"; only explicit booleans are kept.
 MODEL_CAPABILITY_KEYS: tuple[str, ...] = ("tools", "vision", "json_output", "reasoning")
 
+_DASHSCOPE_VOICE_BINDINGS = {"dashscope", "aliyun", "bailian"}
+
 
 def _normalize_model_capabilities(model: dict[str, Any]) -> bool:
     raw = model.get("capabilities")
@@ -360,6 +362,27 @@ class ModelCatalogService:
             return True
         return False
 
+    def _drop_retired_task_overrides(self, catalog: dict[str, Any]) -> bool:
+        """Remove per-task pins whose task no longer exists.
+
+        Nothing reads them, but the settings page counts every pin when deciding
+        whether a model is still in use — and offers no row to clear one for a
+        task it no longer lists — so a stale pin would lock its model forever.
+        """
+        from deeptutor.services.model_selection.tasks import TASK_KINDS, TASK_OVERRIDES_KEY
+
+        service = catalog.get("services", {}).get("task", {})
+        overrides = service.get(TASK_OVERRIDES_KEY) if isinstance(service, dict) else None
+        if not isinstance(overrides, dict):
+            return False
+        known = {str(spec.kind) for spec in TASK_KINDS}
+        retired = [key for key in overrides if key not in known]
+        for key in retired:
+            overrides.pop(key)
+        if retired and not overrides:
+            service.pop(TASK_OVERRIDES_KEY)
+        return bool(retired)
+
     def _normalize_connections(self, catalog: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Fill in connection defaults and return them keyed by id."""
         raw = catalog.get("connections")
@@ -479,6 +502,27 @@ class ModelCatalogService:
                         model.setdefault("id", f"{service_name}-model-{uuid4().hex[:8]}")
                         model.setdefault("name", model.get("model") or "Untitled Model")
                         model.setdefault("model", "")
+                        if service_name == "stt" and model["model"] == "paraformer-v2":
+                            from .provider_links import resolve_profile_provider
+
+                            # The provider can be overridden on either the profile
+                            # or the model. Use the binding the runtime will use.
+                            try:
+                                effective = resolve_profile_provider(
+                                    catalog, service_name, profile, model
+                                )
+                            except ValueError:
+                                effective = {}  # Leave a broken reference for readiness to report.
+                            if (
+                                str(effective.get("binding") or "").strip().lower()
+                                in _DASHSCOPE_VOICE_BINDINGS
+                            ):
+                                # The old default was a batch API model, but this
+                                # adapter always uses the real-time WebSocket.
+                                model["model"] = "paraformer-realtime-v2"
+                                if model["name"] == "paraformer-v2":
+                                    model["name"] = "paraformer-realtime-v2"
+                                changed = True
                         if service_name in LLM_SHAPED_SERVICES and _normalize_model_capabilities(
                             model
                         ):
@@ -531,6 +575,8 @@ class ModelCatalogService:
                     service["active_model_id"] = models[0]["id"]
                     changed = True
         if self._drop_legacy_llm_tasks(catalog):
+            changed = True
+        if self._drop_retired_task_overrides(catalog):
             changed = True
         return changed
 

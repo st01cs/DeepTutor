@@ -74,6 +74,15 @@ _PROMISE_TAIL_CHARS = 160
 # more reliable than recognising the wording, which varies every turn.
 _DANGLING_LEAD_IN_CHARS = frozenset(":：")
 
+# A bare instruction to pick from unseen choices is also a promise of a card.
+# #1508 ended with "四个选项，选一个。" after describing the objective, but
+# never called mastery_quiz, so no choices were available to the learner.
+_UNPOSTED_CHOICE_LEAD_IN_RE = re.compile(
+    r"(?:[两三四五六七八九十]|\d+)个选项[，,、:\s]*(?:请|你)?(?:选|挑)(?:一|1)个[。！？.!?]?\s*$|"
+    r"\b(?:three|four|\d+) (?:choices|options)[,:;\s]+(?:choose|pick|select) one[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
 # Delivery claims can precede a long explanation, unlike the vague question
 # announcements above. Check clauses across the reply, but require both a
 # concrete card/question and a delivery verb rather than the word "card" alone.
@@ -326,7 +335,12 @@ class MasteryLoopCapability:
                 "fail rather than report successful completion."
             )
         if not state.get("card_posted") and (
-            _announces_an_unposed_question(final_text) or _claims_card_delivery(final_text)
+            _announces_an_unposed_question(final_text)
+            or _claims_card_delivery(final_text)
+            or (
+                not state.get("quiz_awaiting_grade")
+                and _UNPOSTED_CHOICE_LEAD_IN_RE.search(final_text)
+            )
         ):
             # Argument binding sets quiz_awaiting_grade even when registration
             # fails. Only the tool's success callback marks a card as posted.
@@ -410,6 +424,25 @@ class MasteryLoopCapability:
         skipped = self._skip_seed(context)
         graded = self._grade_seed(context)
         return "\n\n".join(part for part in (skipped, graded) if part)
+
+    def skip_kb_seed(self, context: UnifiedContext) -> bool:
+        """Don't pre-search the knowledge base with a card answer.
+
+        The message of a card turn is the learner's pick ("A", "True") or a
+        declined question, not a question to look up. The engine grades it
+        against the stored key, and the tutor can still call ``rag`` with the
+        actual question if it needs the material.
+        """
+        if not self.is_active(context):
+            return False
+        meta = context.metadata
+        grade = meta.get("mastery_card_grade")
+        skip = meta.get("mastery_card_skip")
+        return bool(
+            meta.get("mastery_card_answered")
+            or (isinstance(grade, dict) and grade)
+            or (isinstance(skip, dict) and skip.get("skipped"))
+        )
 
     def _skip_seed(self, context: UnifiedContext) -> str:
         """State that the learner's declined question is already gone.

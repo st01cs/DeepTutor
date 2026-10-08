@@ -14,6 +14,7 @@ from deeptutor.services.llm.context_window import (
     coerce_positive_int,
     resolve_effective_context_window,
 )
+from deeptutor.services.prompt.language import language_label
 
 from .ask_user_trace import (
     extract_ask_user_clarification_blocks,
@@ -38,6 +39,13 @@ MAX_SUMMARY_OUTPUT_TOKENS = 16_384
 MAX_RAW_REBUILD_TOKENS = 131_072
 
 
+# Planning allowance per image, not provider-reported usage. Counting encoded
+# image bytes as text can exhaust the entire history budget on one screenshot.
+# Reserve nonzero headroom for vision while keeping it independent of PNG/JPEG
+# compression and URL length. Repeated images each consume this allowance.
+IMAGE_CONTEXT_TOKEN_ESTIMATE = 4096
+
+
 def count_tokens(text: str) -> int:
     """Estimate token count with tiktoken when available."""
     if not text:
@@ -49,6 +57,37 @@ def count_tokens(text: str) -> int:
         return len(encoding.encode(text))
     except Exception:
         return max(1, len(text) // 4)
+
+
+def _count_model_context_tokens(value: Any) -> int:
+    """Measure a temporary accounting view; never alter the replay payload.
+
+    Keep all text, tool arguments/results and provider replay state in the
+    existing serialized-text estimate. Only recognized multimodal image blocks
+    use a separate allowance; their encoded bytes/URLs are not language tokens.
+    This is a context-planning heuristic, not an exact vision billing counter.
+    """
+    image_count = 0
+
+    def accounting_view(item: Any) -> Any:
+        nonlocal image_count
+        if isinstance(item, dict):
+            kind = item.get("type")
+            is_image = (
+                (kind == "image_url" and "image_url" in item)
+                or (kind == "input_image" and ("image_url" in item or "file_id" in item))
+                or (kind == "image" and "source" in item)
+            )
+            if is_image:
+                image_count += 1
+                return {"type": "image"}
+            return {key: accounting_view(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [accounting_view(child) for child in item]
+        return item
+
+    serialized = json.dumps(accounting_view(value), ensure_ascii=False)
+    return count_tokens(serialized) + image_count * IMAGE_CONTEXT_TOKEN_ESTIMATE
 
 
 def trim_incomplete_tail(text: str) -> str:
@@ -269,7 +308,7 @@ class ContextBuilder:
 
     def _model_tokens(self, messages: list[dict[str, Any]], summary: str = "") -> int:
         if any(model_turn(row) is not None for row in messages):
-            return count_tokens(json.dumps(replay_history(messages, summary), ensure_ascii=False))
+            return _count_model_context_tokens(replay_history(messages, summary))
         return count_tokens(build_history_text(self._build_history(summary, messages))) + sum(
             _provider_response_state_tokens(row) for row in messages
         )
@@ -379,6 +418,12 @@ class ContextBuilder:
         # The instruction targets ~80% of the hard cap so the model's own
         # length control — not the max_tokens cut — is the binding limit.
         target_tokens = max(1, int(summary_budget * 0.8))
+        # The summary is replayed as a system row on every later turn, so the
+        # language it is written in keeps steering the answer long after the
+        # turns it condensed have scrolled out. Unstated, a summary of a
+        # foreign-language session comes back in the default language and the
+        # reply follows it — #1511's drift "after a few rounds".
+        summary_language = language_label(language)
         system_prompt = (
             "You maintain a running summary of a conversation so future turns can "
             "continue seamlessly. Rewrite the summary from the material provided, "
@@ -393,7 +438,8 @@ class ContextBuilder:
             "Carry forward still-relevant entries from the existing summary unchanged "
             "unless new information contradicts them; drop only what is obsolete. "
             "Prefer concrete details (numbers, identifiers, exact terms) over "
-            "abstract restatement. Never invent information."
+            "abstract restatement. Never invent information. "
+            f"Write the summary itself in {summary_language}."
         )
         if language.startswith("zh"):
             system_prompt = (
@@ -406,6 +452,7 @@ class ContextBuilder:
                 "- 待办事项：未回答的问题、未完成的任务、已知阻塞\n"
                 "已有摘要中仍然有效的条目应原样保留，仅在新信息与之矛盾时修改，只删除确已过时"
                 "的内容。优先保留具体细节（数字、标识符、确切措辞），不要抽象转述，绝不虚构。"
+                f"摘要正文本身请使用{summary_language}撰写。"
             )
         user_prompt = (
             f"Update the summary using the material below. "

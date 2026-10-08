@@ -31,6 +31,7 @@ import type { StudyCourse } from "@/lib/courses-api";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { SidebarHome, SidebarNav } from "@/components/sidebar/SidebarNav";
 import { SECONDARY_NAV, isNavActive } from "@/components/sidebar/nav-entries";
+import Tooltip from "@/shared/ui/Tooltip";
 import {
   mergeManualOrder,
   readSessionOrder,
@@ -188,6 +189,7 @@ export function SidebarShell({
         <div className="relative mb-2 flex h-9 w-9 items-center justify-center">
           <Link
             href="/"
+            prefetch={false}
             aria-label="DeepTutor"
             className="flex items-center justify-center transition-opacity duration-150 group-hover/sb:opacity-0"
           >
@@ -223,18 +225,20 @@ export function SidebarShell({
           {SECONDARY_NAV.map((item) => {
             const active = isNavActive(pathname, item.href);
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                title={t(item.label) as string}
-                className={`relative flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150 ${
-                  active
-                    ? "bg-[var(--accent)] text-[var(--foreground)] shadow-sm"
-                    : "text-foreground/85 hover:bg-background/60 hover:text-[var(--foreground)]"
-                }`}
-              >
-                <item.icon size={18} strokeWidth={active ? 2 : 1.6} />
-              </Link>
+              <Tooltip key={item.href} label={t(item.label) as string} side="right">
+                <Link
+                  href={item.href}
+                  prefetch={false}
+                  aria-label={t(item.label) as string}
+                  className={`relative flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150 ${
+                    active
+                      ? "bg-[var(--accent)] text-[var(--foreground)] shadow-sm"
+                      : "text-foreground/85 hover:bg-background/60 hover:text-[var(--foreground)]"
+                  }`}
+                >
+                  <item.icon size={18} strokeWidth={active ? 2 : 1.6} />
+                </Link>
+              </Tooltip>
             );
           })}
           {renderedFooter}
@@ -252,7 +256,7 @@ export function SidebarShell({
     >
       {/* Header: logo + collapse toggle */}
       <div className="flex h-[52px] shrink-0 items-center justify-between px-4">
-        <Link href="/" className="group flex items-center gap-1.5">
+        <Link href="/" prefetch={false} className="group flex items-center gap-1.5">
           <Image
             src="/logo.png"
             alt="DeepTutor"
@@ -364,6 +368,7 @@ export function SidebarShell({
               <Link
                 key={item.href}
                 href={item.href}
+                prefetch={false}
                 onClick={closeDrawerOnNav}
                 className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
                   active

@@ -9,9 +9,10 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from deeptutor.learning.storage import LearningStore
 from deeptutor.multi_user.learning_access import (
     allowed_reading_extensions,
     assert_learning_material,
@@ -23,6 +24,8 @@ from deeptutor.reading.extensions import (
     get_reading_extension_registry,
 )
 from deeptutor.services.llm.exceptions import LLMError
+from deeptutor.services.voice import VoiceProviderError, synthesize_speech
+from deeptutor.services.voice.audio import _parse_pcm_content_type, _pcm16_to_wav
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +57,10 @@ class ActionPayload(BaseModel):
     locale: str = Field(default="en", max_length=32)
 
 
+class ReadAloudAudioPayload(BaseModel):
+    locator: int = Field(ge=1)
+
+
 class QuizAnswerItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -69,6 +76,7 @@ class QuizAnswersPayload(BaseModel):
     section_title: str = Field(default="", max_length=500)
     session_id: str = ""
     turn_id: str = ""
+    submission_id: str = Field(default="", max_length=200)
     answers: list[QuizAnswerItem] = Field(min_length=1)
 
 
@@ -78,7 +86,27 @@ def _normal(value: str) -> str:
 
 def _verified_selection(candidate: str, unit_text: str) -> str:
     value = _normal(candidate)
-    return value if value and value in _normal(unit_text) else ""
+    if not value:
+        return ""
+    unit = _normal(unit_text)
+    if value in unit:
+        return value
+    # A PDF's text layer and its extracted text disagree about where the
+    # breaks go: margin line numbers the extractor put on their own lines
+    # ("Language\n1\nModels") reach the browser glued to the word before them
+    # ("Language1 Models"). Whitespace carries no content, so match without
+    # it, and hand the extension the material's own spelling of the span.
+    compact: list[str] = []
+    positions: list[int] = []
+    for index, character in enumerate(unit):
+        if not character.isspace():
+            compact.append(character)
+            positions.append(index)
+    needle = re.sub(r"\s+", "", value)
+    found = "".join(compact).find(needle)
+    if found < 0:
+        return ""
+    return unit[positions[found] : positions[found + len(needle) - 1] + 1]
 
 
 def _discard_late_worker_result(worker: asyncio.Future) -> None:
@@ -93,6 +121,23 @@ def _discard_late_worker_result(worker: asyncio.Future) -> None:
         logger.exception("Reading extension worker failed after its request ended")
 
 
+def _record_reading_activity(
+    material_id: str,
+    *,
+    extension_id: str,
+    action: str,
+    locator: int,
+    result_type: str,
+) -> None:
+    LearningStore().record_reading_activity(
+        material_id,
+        extension_id=extension_id,
+        action=action,
+        locator=locator,
+        result_type=result_type,
+    )
+
+
 @router.get("/extensions")
 async def list_extensions() -> list[dict[str, Any]]:
     allowed = allowed_reading_extensions()
@@ -101,6 +146,50 @@ async def list_extensions() -> list[dict[str, Any]]:
         for extension in get_reading_extension_registry().all()
         if allowed is None or extension.manifest.id in allowed
     ]
+
+
+@router.post("/materials/{material_id}/read-aloud")
+async def read_material_aloud(material_id: str, payload: ReadAloudAudioPayload) -> Response:
+    """Synthesize one assigned material unit with the active server voice."""
+    try:
+        assert_learning_material(material_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    allowed = allowed_reading_extensions()
+    if allowed is not None and "read_aloud" not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="This reading extension is not allowed."
+        )
+
+    extension = get_reading_extension_registry().get("read_aloud")
+    if extension is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Reading extension not found."
+        )
+
+    try:
+        text = ReadingStore().unit_text(material_id, payload.locator)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    try:
+        audio, content_type = await synthesize_speech(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except VoiceProviderError as exc:
+        logger.warning("Reading TTS provider error for %s: %s", material_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The speech provider is unavailable. Browser speech will be used instead.",
+        ) from exc
+
+    pcm_info = _parse_pcm_content_type(content_type)
+    if pcm_info:
+        sample_rate, channels = pcm_info
+        audio = _pcm16_to_wav(audio, sample_rate=sample_rate, channels=channels)
+        content_type = "audio/wav"
+    return Response(content=audio, media_type=content_type, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/materials/{material_id}/extensions/{extension_id}/actions/{action}")
@@ -187,7 +276,6 @@ async def run_extension_action(
         quiz_payload = dumped.get("payload")
         if dumped.get("type") == "quiz" and isinstance(quiz_payload, dict):
             await _persist_reading_quiz_pending(material_id, payload.locator, quiz_payload)
-        return dumped
     except TimeoutError as exc:
         logger.warning("Reading extension %s action %s timed out", extension_id, action)
         raise HTTPException(
@@ -220,6 +308,19 @@ async def run_extension_action(
             worker.add_done_callback(_discard_late_worker_result)
         registry.finish_action(extension_id)
 
+    try:
+        await asyncio.to_thread(
+            _record_reading_activity,
+            material_id,
+            extension_id=extension_id,
+            action=action,
+            locator=payload.locator,
+            result_type=result.type,
+        )
+    except Exception:
+        logger.exception("Reading action succeeded, but learning activity recording failed")
+    return dumped
+
 
 def _choice_map(choices: list[Any]) -> dict[str, str]:
     return {
@@ -235,6 +336,12 @@ def _material_title(material_id: str) -> str:
     except Exception:
         return ""
     return str(getattr(manifest, "title", "") or getattr(manifest, "filename", "") or "")
+
+
+def _assert_quiz_extension_allowed() -> None:
+    allowed = allowed_reading_extensions()
+    if allowed is not None and "quiz" not in allowed:
+        raise HTTPException(status_code=403, detail="This reading extension is not allowed.")
 
 
 async def _persist_reading_quiz_pending(
@@ -257,6 +364,7 @@ async def _persist_reading_quiz_pending(
 async def submit_quiz_answers(material_id: str, payload: QuizAnswersPayload) -> dict[str, Any]:
     try:
         assert_learning_material(material_id)
+        _assert_quiz_extension_allowed()
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -270,7 +378,8 @@ async def submit_quiz_answers(material_id: str, payload: QuizAnswersPayload) -> 
 
     store = get_sqlite_session_store()
     question_ids = [item.question_id.strip() for item in payload.answers]
-    pending = await store.get_reading_quiz_pending(material_id, payload.locator, question_ids)
+    pending_quiz = await store.get_reading_quiz_pending(material_id, payload.locator)
+    pending = {qid: pending_quiz[qid] for qid in question_ids if qid in pending_quiz}
     missing = [qid for qid in question_ids if qid not in pending]
     if missing:
         raise HTTPException(status_code=409, detail="This reading quiz has expired.")
@@ -315,6 +424,13 @@ async def submit_quiz_answers(material_id: str, payload: QuizAnswersPayload) -> 
             str(choices[item.selected_index]) if 0 <= item.selected_index < len(choices) else ""
         )
         correct_text = str(choices[correct_index]) if 0 <= correct_index < len(choices) else ""
+        submission_id = payload.submission_id.strip()
+        attempt_id = (
+            f"reading:{origin_type}:{origin_ref}:{turn_id}:"
+            f"{item.question_id.strip()}:{submission_id}"
+            if submission_id
+            else ""
+        )
         try:
             await record_assessment(
                 AssessmentRecord(
@@ -338,6 +454,7 @@ async def submit_quiz_answers(material_id: str, payload: QuizAnswersPayload) -> 
                     section_title=section_title,
                     mastery_path_id=str(question.get("mastery_path_id") or ""),
                     knowledge_point_id=str(question.get("knowledge_point_id") or ""),
+                    attempt_id=attempt_id,
                 )
             )
         except RecordAssessmentError as exc:
@@ -349,7 +466,33 @@ async def submit_quiz_answers(material_id: str, payload: QuizAnswersPayload) -> 
                 "result": result,
             }
         )
-    return {"answers": graded}
+    response: dict[str, Any] = {"answers": graded}
+    current_question_ids = list(pending_quiz)
+    best_results = await store.best_reading_quiz_results(
+        material_id, payload.locator, current_question_ids
+    )
+    if current_question_ids and all(
+        best_results.get(qid, {}).get("attempted") for qid in current_question_ids
+    ):
+        stars = max(1, sum(bool(best_results[qid].get("correct")) for qid in current_question_ids))
+        response["reward"] = await store.upsert_reading_quiz_reward(
+            material_id, payload.locator, stars
+        )
+    return response
+
+
+@router.get("/materials/{material_id}/quiz/rewards")
+async def list_quiz_rewards(material_id: str) -> dict[str, Any]:
+    try:
+        assert_learning_material(material_id)
+        _assert_quiz_extension_allowed()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    from deeptutor.services.session import get_sqlite_session_store
+
+    rewards = await get_sqlite_session_store().list_reading_quiz_rewards(material_id)
+    return {"rewards": rewards, "total_stars": sum(row["stars"] for row in rewards)}
 
 
 __all__ = ["router"]

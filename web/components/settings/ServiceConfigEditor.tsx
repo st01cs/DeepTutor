@@ -66,6 +66,7 @@ import {
   selectOptionClass,
   stringifyExtraHeaders,
 } from "./shared";
+import type { AppLanguage } from "@/i18n/init";
 
 // The protocol an endpoint speaks. Labels and hints are keyed by the backend
 // value so the select never invents a format the registry does not know.
@@ -1322,9 +1323,15 @@ export function ServiceConfigEditor({
   );
 }
 
-function defaultModelLabel(language: "en" | "zh", index: number): string {
+function defaultModelLabel(language: AppLanguage, index: number): string {
   const safeIndex = index > 0 ? index : 1;
-  return language === "zh" ? `模型${safeIndex}` : `Model ${safeIndex}`;
+  return language === "zh"
+    ? `模型${safeIndex}`
+    : language === "fr"
+      ? `Modèle ${safeIndex}`
+      : language === "de"
+        ? `Modell ${safeIndex}`
+        : `Model ${safeIndex}`;
 }
 
 function formatCompactTokens(value: string | number | undefined): string {
@@ -1709,21 +1716,22 @@ function ProfileFields({
               }
               placeholder="sk-..."
             />
-            <button
-              type="button"
-              onClick={() => setShowApiKey((prev) => !prev)}
-              className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
-              aria-label={
-                showApiKey ? t("Hide API key") : t("Show API key")
-              }
-              title={showApiKey ? t("Hide API key") : t("Show API key")}
-            >
-              {showApiKey ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
-            </button>
+            <span className="absolute right-1 top-1/2 -translate-y-1/2">
+              <Tooltip label={showApiKey ? t("Hide API key") : t("Show API key")} side="top">
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey((prev) => !prev)}
+                  className="rounded-md p-1.5 text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                  aria-label={showApiKey ? t("Hide API key") : t("Show API key")}
+                >
+                  {showApiKey ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </Tooltip>
+            </span>
           </div>
         </div>
       )}
