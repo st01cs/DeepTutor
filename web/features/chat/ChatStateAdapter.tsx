@@ -2079,6 +2079,36 @@ export function ChatStateAdapterProvider({
         } | null;
         const userMessageId = doneMeta?.user_message_id ?? null;
         const assistantMessageId = doneMeta?.assistant_message_id ?? null;
+        // Desktop shell only: a round that finishes while the app is in the
+        // background posts a system notification whose target is this session.
+        // Browser/CLI mode is a no-op inside the helper, and the import is lazy
+        // on purpose: the bridge is dead weight in a browser, and the chat route
+        // sits right on its own bundle budget so it must not be in the first
+        // paint. Only a completed turn raises a banner — a failed turn is
+        // reconciled below but finished nothing.
+        if (
+          status === "completed" &&
+          typeof document !== "undefined" &&
+          (document.hidden || !document.hasFocus())
+        ) {
+          const finished = stateRef.current.sessions[effectiveKey];
+          const lastAssistant = [...(finished?.messages ?? [])]
+            .reverse()
+            .find((message) => message.role === "assistant");
+          void import("@/features/desktop/round-notification")
+            .then(({ notifyDesktopRoundComplete }) => {
+              notifyDesktopRoundComplete({
+                sessionId: finished?.sessionId ?? null,
+                sessionTitle: finished?.sessionTitle ?? null,
+                content:
+                  lastAssistant?.rawContent ?? lastAssistant?.content ?? null,
+                backgrounded: true,
+              });
+            })
+            .catch(() => {
+              /* a missing banner is not worth surfacing */
+            });
+        }
         // A failed turn can still have persisted its user row. Reconcile its
         // id too, or Resend would treat it as an unsaved optimistic row and
         // submit a duplicate user message on the next attempt.

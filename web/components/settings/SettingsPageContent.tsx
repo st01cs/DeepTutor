@@ -60,6 +60,12 @@ const About = dynamic(
     loading,
   },
 );
+const Desktop = dynamic(
+  () => import("@/features/settings/sections/DesktopSettingsSection"),
+  {
+    loading,
+  },
+);
 const Learner = dynamic(
   () => import("@/features/settings/sections/LearnerProfileSettingsSection"),
   { loading },
@@ -198,6 +204,7 @@ const PAGES: Record<string, React.ComponentType> = {
   capabilities: Capabilities,
   starters: Starters,
   attachments: Attachments,
+  desktop: Desktop,
 };
 const AGENTS = {
   "agent-claude-code": "claude_code",

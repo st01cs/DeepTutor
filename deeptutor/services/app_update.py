@@ -28,13 +28,17 @@ GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/HKUDS/DeepTutor/releas
 GITHUB_LATEST_RELEASE_WEB_URL = "https://github.com/HKUDS/DeepTutor/releases/latest"
 VERSION_CHECK_TTL_SECONDS = 24 * 60 * 60
 LAUNCHER_PID_ENV = "DEEPTUTOR_LAUNCHER_PID"
+# Set by the desktop shell for the processes it owns. The shared home for this
+# constant is here rather than in ``runtime.launcher`` because that module
+# already imports from this one, and the reverse would be circular.
+DESKTOP_SHELL_ENV = "DEEPTUTOR_DESKTOP_SHELL"
 SYSTEMD_UPDATE_REASON = (
     "In-app updates are unavailable under a systemd service because systemd may stop "
     "the update worker with the service. Stop the service, upgrade DeepTutor with "
     "the same Python environment, then start the service with systemctl."
 )
 
-InstallMode = Literal["pypi", "source", "docker", "unknown"]
+InstallMode = Literal["pypi", "source", "docker", "desktop", "unknown"]
 JobStatus = Literal["pending", "handoff", "running", "restarting", "succeeded", "failed"]
 
 _STABLE_VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
@@ -180,6 +184,18 @@ def _running_from_source_checkout() -> bool:
     return (checkout_root / ".git").exists() and (checkout_root / "pyproject.toml").is_file()
 
 
+def _running_in_desktop_shell() -> bool:
+    """Return whether the desktop app bundle owns this process.
+
+    A signed bundle can never update itself in place — writing into a macOS
+    ``.app`` (or a Windows install directory under Program Files) invalidates
+    the signature and breaks the next launch — so the shell owns both update
+    planes and the pip path has to stay out of the way.
+    """
+
+    return os.getenv(DESKTOP_SHELL_ENV, "").strip() == "1"
+
+
 def _systemd_service_unit(cgroup_text: str) -> str | None:
     """Find the owning service unit, ignoring user managers and app scopes."""
     for line in cgroup_text.splitlines():
@@ -226,6 +242,15 @@ def detect_installation() -> Installation:
             automatic_update=False,
             command="docker pull ghcr.io/hkuds/deeptutor:latest",
             reason="Container images are updated and recreated by the Docker host.",
+        )
+
+    if _running_in_desktop_shell():
+        return Installation(
+            mode="desktop",
+            current_version=__version__,
+            automatic_update=False,
+            command="Use the desktop app's update menu",
+            reason="The desktop app manages its own updates and must not be modified in place.",
         )
 
     if _running_from_source_checkout():
