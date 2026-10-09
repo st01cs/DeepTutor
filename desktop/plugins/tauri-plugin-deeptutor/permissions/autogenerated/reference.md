@@ -16,6 +16,7 @@ native file picker. Granted to the loopback origin the UI is served from.
 - `allow-take-notification-target`
 - `allow-take-open-request`
 - `allow-first-run-state`
+- `allow-path-space`
 - `allow-apply-first-run`
 - `allow-check-updates`
 - `allow-install-shell-update`
@@ -239,6 +240,32 @@ Enables the notify_round_complete command without any pre-configured scope.
 <td>
 
 Denies the notify_round_complete command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`deeptutor:allow-path-space`
+
+</td>
+<td>
+
+Enables the path_space command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`deeptutor:deny-path-space`
+
+</td>
+<td>
+
+Denies the path_space command without any pre-configured scope.
 
 </td>
 </tr>

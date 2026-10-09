@@ -1317,6 +1317,14 @@ impl Supervisor {
 
     pub fn first_run_state(&self) -> FirstRunState {
         let snapshot = self.shell_settings();
+        // The wizard's storage step names both directories: the profile root it
+        // actually redirects, and the `data/` folder the product writes into.
+        let data_dir = PathBuf::from(&snapshot.home).join("data");
+        let space_root = if data_dir.exists() {
+            data_dir.clone()
+        } else {
+            PathBuf::from(&snapshot.home)
+        };
         FirstRunState {
             completed: snapshot.first_run_completed,
             locale: snapshot.locale,
@@ -1328,6 +1336,9 @@ impl Supervisor {
             // Changing the data directory is a first-run decision: doing it
             // later would orphan the profile the user already has.
             can_change_data_dir: !snapshot.first_run_completed,
+            data_dir: data_dir.to_string_lossy().into_owned(),
+            free_bytes: tauri_plugin_deeptutor::disk_space(&space_root)
+                .map(|space| space.free_bytes),
         }
     }
 
@@ -2354,6 +2365,51 @@ mod tests {
         assert!(outcome.settings.first_run_completed);
         assert!(!outcome.settings.notifications);
         assert!(!supervisor.needs_first_run());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The storage step's free-space command is for the local wizard only. The
+    /// remote capability is the privilege boundary for a page served over
+    /// loopback, so it has to keep listing commands one by one rather than
+    /// inheriting the shell's default set.
+    #[test]
+    fn the_free_space_command_stays_off_the_remote_capability() {
+        let remote = include_str!("../capabilities/remote-web.json");
+        let local = include_str!("../capabilities/main.json");
+        assert!(
+            !remote.contains("path-space"),
+            "path_space must not be reachable from the loopback UI"
+        );
+        assert!(
+            !remote.contains("deeptutor:default"),
+            "the default permission set belongs to the local window"
+        );
+        assert!(local.contains("deeptutor:default"));
+    }
+
+    /// The wizard's storage step used to print the profile root under a "data
+    /// directory" heading. It now names the folder the product actually writes
+    /// into, and the space left on that volume.
+    #[test]
+    fn the_storage_step_names_the_data_directory_and_its_free_space() {
+        let home = temp_home("storage-step");
+        let config = ShellConfig::resolve_full(
+            &|key| (key == "DEEPTUTOR_HOME").then(|| home.to_string_lossy().into_owned()),
+            &|_| None,
+        );
+        let supervisor = Supervisor::new_shared(config);
+
+        let state = supervisor.first_run_state();
+        assert_eq!(
+            state.data_dir,
+            home.join("data").to_string_lossy().into_owned()
+        );
+        #[cfg(unix)]
+        assert!(
+            state.free_bytes.is_some_and(|bytes| bytes > 0),
+            "a readable volume must report its free space: {:?}",
+            state.free_bytes
+        );
         let _ = fs::remove_dir_all(&home);
     }
 

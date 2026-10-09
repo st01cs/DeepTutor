@@ -275,6 +275,10 @@ fn run_headless(mode: Headless) -> i32 {
                     "home": state.home,
                     "default_home": state.default_home,
                     "can_change_data_dir": state.can_change_data_dir,
+                    // Mirrors the IPC payload the wizard reads, so a headless
+                    // run reports the same storage step a user would see.
+                    "data_dir": state.data_dir,
+                    "free_bytes": state.free_bytes,
                 },
             }));
             0

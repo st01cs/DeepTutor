@@ -17,6 +17,9 @@ const COMMANDS: &[&str] = &[
     "take_open_request",
     "first_run_state",
     "apply_first_run",
+    // Free space for the storage step's chosen folder. Local-window only: the
+    // remote capability grants commands one by one and does not list this.
+    "path_space",
     "check_updates",
     "install_shell_update",
     "log_event",

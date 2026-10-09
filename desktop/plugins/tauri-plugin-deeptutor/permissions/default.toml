@@ -15,6 +15,7 @@ permissions = [
     "allow-take-notification-target",
     "allow-take-open-request",
     "allow-first-run-state",
+    "allow-path-space",
     "allow-apply-first-run",
     "allow-check-updates",
     "allow-install-shell-update",

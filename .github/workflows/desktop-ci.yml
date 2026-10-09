@@ -123,6 +123,13 @@ jobs:
           first = json.load(open('first-run.json'))
           assert first['first_run']['completed'] is False, first
           assert first['first_run']['can_change_data_dir'] is True, first
+          # The storage step the wizard shows: the profile root it redirects,
+          # the data folder the product writes into, and the space left there.
+          home = first['first_run']['home']
+          data = first['first_run']['data_dir']
+          assert data.startswith(home), first
+          assert data.endswith('data'), first
+          assert first['first_run']['free_bytes'] > 0, first
 
           done = json.load(open('first-run-done.json'))
           assert done['restart_required'] is True, done

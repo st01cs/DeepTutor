@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-path-space"
+description = "Enables the path_space command without any pre-configured scope."
+commands.allow = ["path_space"]
+
+[[permission]]
+identifier = "deny-path-space"
+description = "Denies the path_space command without any pre-configured scope."
+commands.deny = ["path_space"]

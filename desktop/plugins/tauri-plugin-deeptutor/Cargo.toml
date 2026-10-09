@@ -23,5 +23,10 @@ tauri-plugin-updater = "2"
 # UI as bytes so it can reuse the web upload pipeline).
 base64 = "0.22"
 
+[target.'cfg(unix)'.dependencies]
+# Free-space reporting for the first-run wizard's storage choice (statvfs), the
+# same dependency and shape the shell crate uses for its unix-only calls.
+libc = "0.2"
+
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }
