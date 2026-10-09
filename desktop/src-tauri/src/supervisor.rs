@@ -171,7 +171,7 @@ impl ShellConfig {
                 tried.push(format!("{} — 不存在", candidate.path.display()));
                 continue;
             }
-            if probe_interpreter(&candidate.path) {
+            if probe_interpreter(&candidate.path, &self.workdir) {
                 return Ok(candidate);
             }
             tried.push(format!(
@@ -256,11 +256,20 @@ fn path_python_names() -> &'static [&'static str] {
 }
 
 /// Does this interpreter have DeepTutor's CLI installed?
-fn probe_interpreter(path: &Path) -> bool {
+///
+/// The probe runs in `cwd` on purpose: importing `deeptutor_cli.main` creates
+/// the data layout relative to the working directory
+/// (`deeptutor/logging/configure.py` defaults its log directory to
+/// `data/user/logs`), and the launcher is started with exactly this working
+/// directory. Probing from anywhere else — a Finder launch inherits `/` —
+/// reports a perfectly healthy interpreter as broken, because creating `/data`
+/// is not permitted.
+fn probe_interpreter(path: &Path, cwd: &Path) -> bool {
     let mut command = Command::new(path);
     command
         .arg("-c")
         .arg("import deeptutor_cli.main")
+        .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -2055,6 +2064,43 @@ mod tests {
         assert_eq!(candidates[0].source, "DEEPTUTOR_DESKTOP_PYTHON");
         assert_eq!(candidates[0].path, PathBuf::from("/opt/py/bin/python3"));
         assert!(candidates[0].must_exist);
+    }
+
+    /// Importing `deeptutor_cli.main` writes its data layout into the working
+    /// directory, so the probe has to run where the launcher will run. A Finder
+    /// launch inherits `/`, and probing there reported a healthy runtime pack as
+    /// "无法导入 deeptutor_cli" because creating `/data` is not permitted.
+    #[cfg(unix)]
+    #[test]
+    fn the_probe_runs_in_the_given_working_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_home("probe-cwd");
+        let workdir = root.join("workdir");
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir_all(&workdir).expect("workdir");
+        fs::create_dir_all(&elsewhere).expect("elsewhere");
+        // macOS hands out `/var/...` while the child sees `/private/var/...`:
+        // compare against what the shell's `$PWD` will actually be.
+        let expected = workdir.canonicalize().expect("canonical workdir");
+
+        // A stand-in interpreter that only succeeds from `workdir`.
+        let fake = root.join("fake-python");
+        fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\n[ \"$PWD\" = \"{}\" ] || exit 1\nexit 0\n",
+                expected.display()
+            ),
+        )
+        .expect("fake interpreter");
+        let mut permissions = fs::metadata(&fake).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake, permissions).expect("chmod");
+
+        assert!(probe_interpreter(&fake, &workdir));
+        assert!(!probe_interpreter(&fake, &elsewhere));
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// The loopback IPC self-test evals into the live UI, so it must never run
