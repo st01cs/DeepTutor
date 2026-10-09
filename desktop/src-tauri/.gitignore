@@ -1,2 +1,7 @@
 /target/
 /gen/schemas/
+# `tauri icon icons/icon.png --output icons` regenerates the platform icon set
+# at bundle time (the release workflow runs it on every build), so only the
+# source PNG is committed.
+/icons/*
+!/icons/icon.png
