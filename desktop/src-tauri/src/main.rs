@@ -325,7 +325,15 @@ fn run_headless(mode: Headless) -> i32 {
             // it must never restart a service from a process about to exit.
             let runtime = supervisor.preview_runtime_updates(None);
             let shell = headless_shell_update_report(&locale);
-            let failed = runtime.error.is_some() || shell.status == "error";
+            // Only the runtime plane can fail this command. It is local (a
+            // catalog file and this machine's packs), so an error there means
+            // the check could not do its job. The shell plane needs the update
+            // channel, and `error` is a normal outcome for a machine that
+            // cannot reach it — the window renders the same status, and the
+            // report carries the reason in `shell_update.detail`. Failing here
+            // made `desktop-ci.yml`'s offline runner report the whole job as
+            // broken even though the check had answered.
+            let failed = runtime.error.is_some();
             print_json(&serde_json::json!({
                 "shell": "deeptutor-desktop",
                 "mode": "check-updates",

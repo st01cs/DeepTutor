@@ -156,6 +156,10 @@ jobs:
           }
           pathlib.Path('runtime-packs.fixture.json').write_text(json.dumps(catalog))
           "
+          # `set -e` makes this an exit-code assertion too: the command fails
+          # only when the local runtime plane cannot answer. A runner that
+          # cannot reach the update channel reports `error` for the shell plane
+          # (the assertions below accept it), which is not a broken build.
           ./target/debug/deeptutor-desktop --check-updates \
             --catalog ./runtime-packs.fixture.json > updates.json
           python3 -c "
