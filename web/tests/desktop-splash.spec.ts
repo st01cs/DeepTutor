@@ -47,4 +47,41 @@ describe("desktop splash and wizard", () => {
       /invoke\("pick_folder",\s*\{\s*options:\s*\{\s*title:\s*copy\(\)\.dataHeading\s*\},?\s*\}\)/,
     );
   });
+
+  it("names the real data directory, not just the profile root", () => {
+    // The step used to print the profile root under a "data directory"
+    // heading, so "where do my knowledge bases go" was answered by the wrong
+    // folder. It now names both, plus the space left on that volume.
+    for (const id of ["data-profile", "data-storage", "data-space"]) {
+      expect(wizard).toContain(`id="${id}"`);
+    }
+    expect(html).toMatch(/dataDirDefault/);
+    expect(html).toMatch(/invoke\("path_space",\s*\{\s*path\s*\}\)/);
+  });
+
+  it("cannot be clicked past without a storage answer", () => {
+    // A first run that silently keeps the default is a first run that never
+    // asked. Both buttons are answers; "Next" waits for one of them.
+    expect(html).toMatch(/dataConfirmed/);
+    expect(html).toMatch(
+      /STEPS\[state\.step\] === "data" && state\.canChangeDataDir && !state\.dataConfirmed/,
+    );
+    expect(html).toMatch(/disabled = !state\.finished && needsStorageChoice/);
+    expect(html.match(/state\.dataConfirmed = true/g) ?? []).toHaveLength(2);
+  });
+
+  it("has copy for every storage label in both languages", () => {
+    for (const key of [
+      "profileLabel",
+      "storageLabel",
+      "spaceLabel",
+      "spaceUnknown",
+      "space",
+      "confirmHint",
+    ]) {
+      // Anchored to the line: `space:` also appears in the stylesheet
+      // (`white-space`), and only the two COPY blocks define copy.
+      expect(html.match(new RegExp(`^\\s*${key}:`, "gm")) ?? []).toHaveLength(2);
+    }
+  });
 });

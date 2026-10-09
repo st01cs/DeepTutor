@@ -296,11 +296,9 @@ dmypy.json
 # ============================================
 # Built Next.js assets copied into the deeptutor_web package by
 # scripts/prepare_web_package.py (wheel/sdist inputs, never committed).
-# Only deeptutor_web/__init__.py lives in the repository.
+# Only deeptutor_web/__init__.py lives in the repository, so the whole package
+# directory is ignored and that one file is re-included: the standalone output
+# also carries a `lib/` (traced sources) that a list of names kept missing.
 # ============================================
-deeptutor_web/.next/
-deeptutor_web/public/
-deeptutor_web/node_modules/
-deeptutor_web/server.js
-deeptutor_web/package.json
-deeptutor_web/BUILD_INFO
+deeptutor_web/*
+!deeptutor_web/__init__.py

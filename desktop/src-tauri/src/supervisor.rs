@@ -171,7 +171,7 @@ impl ShellConfig {
                 tried.push(format!("{} — 不存在", candidate.path.display()));
                 continue;
             }
-            if probe_interpreter(&candidate.path) {
+            if probe_interpreter(&candidate.path, &self.workdir) {
                 return Ok(candidate);
             }
             tried.push(format!(
@@ -256,11 +256,20 @@ fn path_python_names() -> &'static [&'static str] {
 }
 
 /// Does this interpreter have DeepTutor's CLI installed?
-fn probe_interpreter(path: &Path) -> bool {
+///
+/// The probe runs in `cwd` on purpose: importing `deeptutor_cli.main` creates
+/// the data layout relative to the working directory
+/// (`deeptutor/logging/configure.py` defaults its log directory to
+/// `data/user/logs`), and the launcher is started with exactly this working
+/// directory. Probing from anywhere else — a Finder launch inherits `/` —
+/// reports a perfectly healthy interpreter as broken, because creating `/data`
+/// is not permitted.
+fn probe_interpreter(path: &Path, cwd: &Path) -> bool {
     let mut command = Command::new(path);
     command
         .arg("-c")
         .arg("import deeptutor_cli.main")
+        .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -1308,6 +1317,14 @@ impl Supervisor {
 
     pub fn first_run_state(&self) -> FirstRunState {
         let snapshot = self.shell_settings();
+        // The wizard's storage step names both directories: the profile root it
+        // actually redirects, and the `data/` folder the product writes into.
+        let data_dir = PathBuf::from(&snapshot.home).join("data");
+        let space_root = if data_dir.exists() {
+            data_dir.clone()
+        } else {
+            PathBuf::from(&snapshot.home)
+        };
         FirstRunState {
             completed: snapshot.first_run_completed,
             locale: snapshot.locale,
@@ -1319,6 +1336,9 @@ impl Supervisor {
             // Changing the data directory is a first-run decision: doing it
             // later would orphan the profile the user already has.
             can_change_data_dir: !snapshot.first_run_completed,
+            data_dir: data_dir.to_string_lossy().into_owned(),
+            free_bytes: tauri_plugin_deeptutor::disk_space(&space_root)
+                .map(|space| space.free_bytes),
         }
     }
 
@@ -2057,6 +2077,43 @@ mod tests {
         assert!(candidates[0].must_exist);
     }
 
+    /// Importing `deeptutor_cli.main` writes its data layout into the working
+    /// directory, so the probe has to run where the launcher will run. A Finder
+    /// launch inherits `/`, and probing there reported a healthy runtime pack as
+    /// "无法导入 deeptutor_cli" because creating `/data` is not permitted.
+    #[cfg(unix)]
+    #[test]
+    fn the_probe_runs_in_the_given_working_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_home("probe-cwd");
+        let workdir = root.join("workdir");
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir_all(&workdir).expect("workdir");
+        fs::create_dir_all(&elsewhere).expect("elsewhere");
+        // macOS hands out `/var/...` while the child sees `/private/var/...`:
+        // compare against what the shell's `$PWD` will actually be.
+        let expected = workdir.canonicalize().expect("canonical workdir");
+
+        // A stand-in interpreter that only succeeds from `workdir`.
+        let fake = root.join("fake-python");
+        fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\n[ \"$PWD\" = \"{}\" ] || exit 1\nexit 0\n",
+                expected.display()
+            ),
+        )
+        .expect("fake interpreter");
+        let mut permissions = fs::metadata(&fake).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake, permissions).expect("chmod");
+
+        assert!(probe_interpreter(&fake, &workdir));
+        assert!(!probe_interpreter(&fake, &elsewhere));
+        let _ = fs::remove_dir_all(&root);
+    }
+
     /// The loopback IPC self-test evals into the live UI, so it must never run
     /// unless a diagnostic run asked for it.
     #[test]
@@ -2308,6 +2365,51 @@ mod tests {
         assert!(outcome.settings.first_run_completed);
         assert!(!outcome.settings.notifications);
         assert!(!supervisor.needs_first_run());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The storage step's free-space command is for the local wizard only. The
+    /// remote capability is the privilege boundary for a page served over
+    /// loopback, so it has to keep listing commands one by one rather than
+    /// inheriting the shell's default set.
+    #[test]
+    fn the_free_space_command_stays_off_the_remote_capability() {
+        let remote = include_str!("../capabilities/remote-web.json");
+        let local = include_str!("../capabilities/main.json");
+        assert!(
+            !remote.contains("path-space"),
+            "path_space must not be reachable from the loopback UI"
+        );
+        assert!(
+            !remote.contains("deeptutor:default"),
+            "the default permission set belongs to the local window"
+        );
+        assert!(local.contains("deeptutor:default"));
+    }
+
+    /// The wizard's storage step used to print the profile root under a "data
+    /// directory" heading. It now names the folder the product actually writes
+    /// into, and the space left on that volume.
+    #[test]
+    fn the_storage_step_names_the_data_directory_and_its_free_space() {
+        let home = temp_home("storage-step");
+        let config = ShellConfig::resolve_full(
+            &|key| (key == "DEEPTUTOR_HOME").then(|| home.to_string_lossy().into_owned()),
+            &|_| None,
+        );
+        let supervisor = Supervisor::new_shared(config);
+
+        let state = supervisor.first_run_state();
+        assert_eq!(
+            state.data_dir,
+            home.join("data").to_string_lossy().into_owned()
+        );
+        #[cfg(unix)]
+        assert!(
+            state.free_bytes.is_some_and(|bytes| bytes > 0),
+            "a readable volume must report its free space: {:?}",
+            state.free_bytes
+        );
         let _ = fs::remove_dir_all(&home);
     }
 

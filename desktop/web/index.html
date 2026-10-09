@@ -92,6 +92,12 @@
         word-break: break-all;
       }
       .row { display: flex; gap: 10px; }
+      /* The storage step labels three paths; a bare `<p>` per path read as one
+         wall of monospace text and hid which folder was which. */
+      .paths { margin: 0 0 14px; }
+      .paths dt { margin: 0 0 4px; color: var(--muted); font-size: 12px; }
+      .paths dd { margin: 0 0 10px; }
+      .paths dd .value { margin: 0; }
       .toggle {
         display: flex;
         gap: 10px;
@@ -147,11 +153,21 @@
         <section class="step" id="step-data" hidden>
           <h2 id="data-heading">数据目录</h2>
           <p class="hint" id="data-hint"></p>
-          <p class="value" id="data-dir"></p>
+          <dl class="paths">
+            <dt id="profile-label"></dt>
+            <dd><p class="value" id="data-profile"></p></dd>
+            <dt id="storage-label"></dt>
+            <dd><p class="value" id="data-storage"></p></dd>
+            <dt id="space-label"></dt>
+            <dd><p class="value" id="data-space"></p></dd>
+          </dl>
           <div class="row">
             <button type="button" id="pick-dir"></button>
             <button type="button" id="reset-dir"></button>
           </div>
+          <!-- The storage step owns a decision the user cannot click past: the
+               hint explains what the two buttons are for while it is pending. -->
+          <p class="hint" id="data-confirm"></p>
         </section>
         <section class="step" id="step-behaviour" hidden>
           <h2 id="behaviour-heading">桌面行为</h2>
@@ -230,8 +246,15 @@
           title: "欢迎使用 DeepTutor",
           localeHeading: "界面语言",
           localeHint: "随时可以在「设置 → 通用」中修改。",
-          dataHeading: "数据目录",
-          dataHint: "知识库、会话与设置都会存放在这里。改动会在重启应用后生效。",
+          dataHeading: "存储位置",
+          dataHint: "知识库、会话与设置都会存放在这里；改动会在重启应用后生效。",
+          profileLabel: "配置与运行时（profile 目录）",
+          storageLabel: "知识库、会话与数据",
+          spaceLabel: "可用空间",
+          spaceUnknown: "无法读取（仍可继续）",
+          space: (size) => `可用 ${size}`,
+          confirmHint: (path) =>
+            `请先确认存储位置：点「选择文件夹 …」自选，或点「使用默认位置」把数据放在 ${path}。`,
           pickDir: "选择文件夹 …",
           resetDir: "使用默认位置",
           behaviourHeading: "桌面行为",
@@ -253,9 +276,16 @@
           title: "Welcome to DeepTutor",
           localeHeading: "Language",
           localeHint: "You can change this later in Settings → General.",
-          dataHeading: "Data directory",
+          dataHeading: "Storage location",
           dataHint:
             "Knowledge bases, sessions and settings live here. A change applies after the app restarts.",
+          profileLabel: "App data (profile)",
+          storageLabel: "Knowledge bases, sessions and data",
+          spaceLabel: "Free space",
+          spaceUnknown: "not readable (you can still continue)",
+          space: (size) => `${size} free`,
+          confirmHint: (path) =>
+            `Confirm where your data goes: choose a folder, or use the default location at ${path}.`,
           pickDir: "Choose folder …",
           resetDir: "Use the default location",
           behaviourHeading: "Desktop behaviour",
@@ -283,6 +313,13 @@
         dataDir: "",
         home: "",
         defaultHome: "",
+        // `<home>/data`, as the shell reports it: the folder a user actually
+        // fills up, and the one the storage step has to name.
+        dataDirDefault: "",
+        // The storage step cannot be clicked past until this is true.
+        dataConfirmed: false,
+        canChangeDataDir: true,
+        spaceBytes: null,
         closeToTray: true,
         notifications: true,
         finished: false,
@@ -293,6 +330,36 @@
         return COPY[state.locale] || COPY["zh-CN"];
       }
 
+      /// The folder the wizard is offering right now: the picked one, or the
+      /// shell's default data directory.
+      function storageDir() {
+        if (!state.dataDir) return state.dataDirDefault || state.home + "/data";
+        return state.dataDir.replace(/\/+$/, "") + "/data";
+      }
+
+      function formatBytes(bytes) {
+        if (bytes === null || bytes === undefined) return "";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let value = bytes;
+        let unit = 0;
+        while (value >= 1024 && unit < units.length - 1) {
+          value /= 1024;
+          unit += 1;
+        }
+        return (unit === 0 ? String(Math.round(value)) : value.toFixed(1)) + " " + units[unit];
+      }
+
+      async function refreshSpace(path) {
+        try {
+          const space = await invoke("path_space", { path });
+          state.spaceBytes = space ? space.free_bytes : null;
+        } catch (error) {
+          // A shell that cannot answer is not a reason to block the choice.
+          state.spaceBytes = null;
+        }
+        render();
+      }
+
       function render() {
         const text = copy();
         document.documentElement.lang = state.locale;
@@ -301,6 +368,9 @@
         document.getElementById("locale-hint").textContent = text.localeHint;
         document.getElementById("data-heading").textContent = text.dataHeading;
         document.getElementById("data-hint").textContent = text.dataHint;
+        document.getElementById("profile-label").textContent = text.profileLabel;
+        document.getElementById("storage-label").textContent = text.storageLabel;
+        document.getElementById("space-label").textContent = text.spaceLabel;
         document.getElementById("pick-dir").textContent = text.pickDir;
         document.getElementById("reset-dir").textContent = text.resetDir;
         document.getElementById("behaviour-heading").textContent = text.behaviourHeading;
@@ -317,7 +387,11 @@
             ? text.restart
             : text.start
           : text.next;
-        document.getElementById("wizard-next").disabled = false;
+        // The storage step owns a decision: nothing advances until the user has
+        // picked a folder or explicitly accepted the default location.
+        const needsStorageChoice =
+          STEPS[state.step] === "data" && state.canChangeDataDir && !state.dataConfirmed;
+        document.getElementById("wizard-next").disabled = !state.finished && needsStorageChoice;
         document.getElementById("wizard-back").disabled = state.step === 0 || state.finished;
         document.getElementById("wizard-progress").textContent = text.progress(state.step);
         // The "later" escape hatch only exists when a relaunch is actually
@@ -328,7 +402,13 @@
         for (const step of STEPS) {
           document.getElementById("step-" + step).hidden = STEPS[state.step] !== step;
         }
-        document.getElementById("data-dir").textContent = state.dataDir || state.home;
+        document.getElementById("data-profile").textContent = state.dataDir || state.home;
+        document.getElementById("data-storage").textContent = storageDir();
+        document.getElementById("data-space").textContent =
+          state.spaceBytes === null ? text.spaceUnknown : text.space(formatBytes(state.spaceBytes));
+        const confirmHint = document.getElementById("data-confirm");
+        confirmHint.hidden = state.dataConfirmed || !state.canChangeDataDir;
+        confirmHint.textContent = confirmHint.hidden ? "" : text.confirmHint(storageDir());
         for (const button of document.querySelectorAll("[data-locale]")) {
           button.setAttribute(
             "aria-pressed",
@@ -391,16 +471,25 @@
           const picked = await invoke("pick_folder", {
             options: { title: copy().dataHeading },
           });
-          if (picked) state.dataDir = picked;
+          // A picked folder *is* the confirmation; an empty result leaves the
+          // step unconfirmed so the hint keeps asking.
+          if (picked) {
+            state.dataDir = picked;
+            state.dataConfirmed = true;
+            await refreshSpace(picked);
+          }
           render();
         } catch (error) {
           showWizardError(String(error));
         }
       });
 
-      document.getElementById("reset-dir").addEventListener("click", () => {
+      document.getElementById("reset-dir").addEventListener("click", async () => {
+        // "Use the default location" is an explicit answer, not a no-op: it is
+        // what unblocks the step when the user does not want to choose.
         state.dataDir = "";
-        render();
+        state.dataConfirmed = true;
+        await refreshSpace(state.home);
       });
 
       document.getElementById("opt-tray").addEventListener("change", (event) => {
@@ -458,6 +547,15 @@
           state.defaultLocale = first.default_locale || state.locale;
           state.home = first.home;
           state.defaultHome = first.default_home;
+          state.dataDirDefault = first.data_dir || state.home + "/data";
+          state.canChangeDataDir = first.can_change_data_dir !== false;
+          // A shell that would not let the folder change at all has nothing to
+          // confirm; otherwise the storage step starts unanswered.
+          state.dataConfirmed = !state.canChangeDataDir;
+          state.spaceBytes =
+            first.free_bytes === undefined || first.free_bytes === null
+              ? null
+              : first.free_bytes;
           state.closeToTray = first.close_to_tray;
           state.notifications = first.notifications;
           wizardEl.hidden = false;

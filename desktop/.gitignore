@@ -1,3 +1,9 @@
 /target/
 /pack/dist/
 /pack/.cache/
+# The Tauri CLI, installed into a local prefix so a build never has to write to
+# the user's global npm prefix (the release workflow installs it globally).
+/.tauri-cli/
+# uv/npm caches a local pack build points at (see desktop/pack/build_pack.py).
+/pack/.uv-cache/
+/pack/.npm-cache/

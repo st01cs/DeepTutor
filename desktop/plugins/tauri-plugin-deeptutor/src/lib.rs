@@ -254,6 +254,63 @@ pub struct FirstRunState {
     pub home: String,
     pub default_home: String,
     pub can_change_data_dir: bool,
+    /// Where knowledge bases, sessions and settings actually land
+    /// (`<home>/data`). The field above names the *profile* root, and the
+    /// wizard used to show only that under a "data directory" heading.
+    pub data_dir: String,
+    /// Free space on the volume holding `data_dir`, when the OS reports it.
+    pub free_bytes: Option<u64>,
+}
+
+/// Free and total bytes of the volume a path lives on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct DiskSpace {
+    pub free_bytes: u64,
+    pub total_bytes: u64,
+}
+
+/// Free space of the volume holding `path`, if this platform can report it.
+///
+/// The wizard asks before it lets a user park their data on a volume that
+/// cannot hold it, and the shell uses the same helper to seed the first render.
+#[cfg(unix)]
+// `statvfs` field widths differ per platform: widening is genuine on 32-bit
+// targets and a no-op on this one, which is what the lint objects to.
+#[allow(clippy::useless_conversion)]
+pub fn disk_space(path: &Path) -> Option<DiskSpace> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    // The wizard asks about a folder that may not exist yet, and the shell asks
+    // about `<home>/data` before the first launch creates it. The volume that
+    // answers "will my data fit" is the one the nearest existing ancestor
+    // lives on.
+    let mut target = path.to_path_buf();
+    while !target.exists() {
+        let parent = target.parent()?;
+        target = parent.to_path_buf();
+    }
+
+    let raw = CString::new(target.as_os_str().as_bytes()).ok()?;
+    // SAFETY: `raw` is a valid NUL-terminated path, and `statvfs` either fills
+    // `stats` completely or returns non-zero, which is checked before any read.
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    let code = unsafe { libc::statvfs(raw.as_ptr(), &mut stats) };
+    if code != 0 {
+        return None;
+    }
+    // `From` rather than `as`: the field widths differ across unixes, and a
+    // redundant cast is a clippy error in this workspace.
+    let block = u64::from(stats.f_frsize);
+    Some(DiskSpace {
+        free_bytes: block.saturating_mul(u64::from(stats.f_bavail)),
+        total_bytes: block.saturating_mul(u64::from(stats.f_blocks)),
+    })
+}
+
+#[cfg(not(unix))]
+pub fn disk_space(_path: &Path) -> Option<DiskSpace> {
+    None
 }
 
 /// The wizard's answers.
@@ -431,6 +488,14 @@ fn take_open_request(backend: State<'_, BackendState>) -> Option<OpenRequestPayl
 #[tauri::command]
 fn first_run_state(backend: State<'_, BackendState>) -> FirstRunState {
     backend.0.first_run()
+}
+
+/// Free space of the folder the wizard is about to choose, so the decision is
+/// made against a real number. Deliberately not granted to the loopback origin
+/// (the remote capability lists commands one by one).
+#[tauri::command]
+fn path_space(path: String) -> Option<DiskSpace> {
+    disk_space(Path::new(&path))
 }
 
 #[tauri::command]
@@ -694,6 +759,7 @@ pub fn init<R: Runtime>(backend: Arc<dyn DesktopBackend>) -> TauriPlugin<R> {
             take_open_request,
             first_run_state,
             apply_first_run,
+            path_space,
             check_updates,
             install_shell_update,
             log_event,
@@ -714,6 +780,23 @@ pub fn init<R: Runtime>(backend: Arc<dyn DesktopBackend>) -> TauriPlugin<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The storage step shows the space left before a user commits to a
+    /// volume. The folder it asks about usually does not exist yet, so the
+    /// answer has to come from the volume it would be created on.
+    #[cfg(unix)]
+    #[test]
+    fn disk_space_reads_a_volume_and_accepts_a_folder_that_does_not_exist() {
+        let temp = std::env::temp_dir();
+        let space = disk_space(&temp).expect("the temp volume is readable");
+        assert!(space.total_bytes > 0);
+        assert!(space.free_bytes <= space.total_bytes);
+
+        let missing = temp.join("deeptutor-not-created-yet");
+        assert!(!missing.exists());
+        let inherited = disk_space(&missing).expect("falls back to the nearest ancestor");
+        assert_eq!(inherited.total_bytes, space.total_bytes);
+    }
 
     /// The wizard and the UI both ask for a folder with `{options: {title}}` and
     /// nothing else. A required `Vec` field made that call fail with

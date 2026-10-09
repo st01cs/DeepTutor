@@ -1401,14 +1401,30 @@ fn rewrite_prefixes(root: &Path, pairs: &[(PathBuf, PathBuf)]) -> Result<(), Str
 }
 
 /// Can this pack actually run the launcher on this machine?
+///
+/// The import creates the data layout relative to the working directory
+/// (`deeptutor/logging/configure.py` defaults its log directory to
+/// `data/user/logs`), so the smoke runs in a scratch directory of its own:
+/// inheriting the caller's cwd makes an install fail whenever that directory is
+/// not writable (`--install-pack` from `/`), and pointing it at the pack would
+/// leave a stray `data/` inside the tree that the next delta fingerprints.
 fn smoke_test(pack_dir: &Path, manifest: &PackManifest) -> Result<(), String> {
     let python = manifest.python_path(pack_dir);
+    let scratch = std::env::temp_dir().join(format!(
+        "deeptutor-pack-smoke-{}-{}",
+        std::process::id(),
+        pack_dir.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let _ = fs::remove_dir_all(&scratch);
+    fs::create_dir_all(&scratch).map_err(|error| format!("无法创建冒烟目录: {error}"))?;
     let output = std::process::Command::new(&python)
         .arg("-c")
         .arg("import deeptutor_cli.main, deeptutor_web")
+        .current_dir(&scratch)
         .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|error| format!("无法运行 {}: {error}", python.display()))?;
+        .output();
+    let _ = fs::remove_dir_all(&scratch);
+    let output = output.map_err(|error| format!("无法运行 {}: {error}", python.display()))?;
     if !output.status.success() {
         return Err(format!(
             "运行时包冒烟失败：{} 无法导入 DeepTutor（{}）",
