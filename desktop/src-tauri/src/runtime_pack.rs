@@ -1190,18 +1190,53 @@ fn replace_file_contents(path: &Path, contents: &[u8]) -> Result<(), String> {
     })
 }
 
-/// Repair the self-references a moved virtualenv carries.
+/// Where a pack keeps its interpreter.
 ///
-/// Two things are path-bound: `pyvenv.cfg`'s `home` (python uses it to find its
-/// stdlib) and the interpreter link in `bin/`. Both are rewritten for this
-/// machine; the build machine's prefix is replaced in the small text files that
-/// embed it (entry-point shebangs, `activate`, `.pth`).
+/// `desktop/pack/build_pack.py` produces two shapes, and both `rehydrate` and the
+/// build-root derivation have to know which one they are looking at:
+///
+/// | | unix | Windows |
+/// |---|---|---|
+/// | interpreter | `python/bin/python3` | `python/python.exe` |
+/// | venv | `venv/bin/python` | `venv/Scripts/python.exe` |
+///
+/// It is a value rather than a pair of `cfg!` branches so that the shape a
+/// Windows pack has can be tested from a macOS checkout — the Windows runner
+/// must not be the only place this logic is exercised.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackLayout {
+    Posix,
+    Windows,
+}
+
+impl PackLayout {
+    pub fn host() -> Self {
+        if cfg!(windows) {
+            Self::Windows
+        } else {
+            Self::Posix
+        }
+    }
+
+    /// The directory `pyvenv.cfg`'s `home` names: where the interpreter lives.
+    pub fn python_home(self, pack_dir: &Path) -> PathBuf {
+        match self {
+            Self::Posix => pack_dir.join("python").join("bin"),
+            Self::Windows => pack_dir.join("python"),
+        }
+    }
+}
+
 /// The directory a pack was *built* in, as its own `pyvenv.cfg` still records it.
 ///
-/// `home = <build root>/python/bin`, which is the derivation `rehydrate` uses to
-/// decide what to rewrite and the one `desktop/pack/build_delta.py::build_root`
-/// mirrors. `None` when the file is missing or has no `home` line.
+/// `home` names `<build root>/python/bin` on unix and `<build root>/python` on
+/// Windows — the derivation `desktop/pack/build_delta.py::build_root` mirrors.
+/// `None` when the file is missing or has no `home` line.
 pub fn pack_root_from_cfg(pack_dir: &Path) -> Option<PathBuf> {
+    pack_root_from_cfg_in(pack_dir, PackLayout::host())
+}
+
+pub fn pack_root_from_cfg_in(pack_dir: &Path, layout: PackLayout) -> Option<PathBuf> {
     let text = fs::read_to_string(pack_dir.join("venv").join("pyvenv.cfg")).ok()?;
     let home = text
         .lines()
@@ -1209,24 +1244,37 @@ pub fn pack_root_from_cfg(pack_dir: &Path) -> Option<PathBuf> {
     if home.is_empty() {
         return None;
     }
-    Path::new(home)
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
+    let home = Path::new(home);
+    match layout {
+        // `<root>/python/bin` → `<root>`
+        PackLayout::Posix => home.parent().and_then(Path::parent).map(Path::to_path_buf),
+        // `<root>/python` → `<root>`
+        PackLayout::Windows => home.parent().map(Path::to_path_buf),
+    }
 }
 
+/// Repair the self-references a moved virtualenv carries.
+///
+/// Two things are path-bound: `pyvenv.cfg`'s `home` (python uses it to find its
+/// stdlib) and the interpreter link in `bin/`. Both are rewritten for this
+/// machine; the build machine's prefix is replaced in the small text files that
+/// embed it (entry-point shebangs, `activate`, `.pth`).
 pub fn rehydrate(pack_dir: &Path) -> Result<(), String> {
+    rehydrate_in(pack_dir, PackLayout::host())
+}
+
+pub fn rehydrate_in(pack_dir: &Path, layout: PackLayout) -> Result<(), String> {
     let venv = pack_dir.join("venv");
     let cfg = venv.join("pyvenv.cfg");
-    let bin_dir = pack_dir.join("python").join("bin");
-    let old_root = pack_root_from_cfg(pack_dir);
+    let python_home = layout.python_home(pack_dir);
+    let old_root = pack_root_from_cfg_in(pack_dir, layout);
 
     let text =
         fs::read_to_string(&cfg).map_err(|error| format!("无法读取 {}: {error}", cfg.display()))?;
     let mut updated = String::with_capacity(text.len());
     for line in text.lines() {
         if line.starts_with("home =") {
-            updated.push_str(&format!("home = {}\n", bin_dir.display()));
+            updated.push_str(&format!("home = {}\n", python_home.display()));
         } else {
             updated.push_str(line);
             updated.push('\n');
@@ -1235,17 +1283,20 @@ pub fn rehydrate(pack_dir: &Path) -> Result<(), String> {
     replace_file_contents(&cfg, updated.as_bytes())?;
 
     // Relative interpreter links: the pack moves as one unit, so `../../python`
-    // stays correct wherever it is unpacked.
+    // stays correct wherever it is unpacked. A Windows venv has the interpreter
+    // *copied* into `Scripts` by uv, so there is nothing to relink there.
     #[cfg(unix)]
     {
-        for name in ["python", "python3", "python3.12"] {
-            let link = venv.join("bin").join(name);
-            if link.symlink_metadata().is_err() {
-                continue;
+        if layout == PackLayout::Posix {
+            for name in ["python", "python3", "python3.12"] {
+                let link = venv.join("bin").join(name);
+                if link.symlink_metadata().is_err() {
+                    continue;
+                }
+                let _ = fs::remove_file(&link);
+                std::os::unix::fs::symlink("../../python/bin/python3", &link)
+                    .map_err(|error| format!("无法重建 {}: {error}", link.display()))?;
             }
-            let _ = fs::remove_file(&link);
-            std::os::unix::fs::symlink("../../python/bin/python3", &link)
-                .map_err(|error| format!("无法重建 {}: {error}", link.display()))?;
         }
     }
 
