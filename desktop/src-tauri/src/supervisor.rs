@@ -2173,14 +2173,25 @@ mod tests {
 
     #[test]
     fn a_bootstrap_pointer_moves_the_data_directory() {
-        let default = PathBuf::from("/Users/example/Library/Application Support/DeepTutor");
-        let chosen = PathBuf::from("/Volumes/Data/DeepTutor");
-        let map = env_map(&[("HOME", "/Users/example")]);
-        let config = ShellConfig::resolve_full(&|key| map.get(key).cloned(), &|home: &Path| {
-            (home == default).then(|| chosen.clone())
+        // The pointer redirects whatever this platform's default home is, and
+        // it is read from that default — never from its own answer. Capturing
+        // the home the shell asked about keeps the test true on any platform
+        // instead of hardcoding one of them.
+        let chosen = if cfg!(windows) {
+            PathBuf::from(r"D:\DeepTutor")
+        } else {
+            PathBuf::from("/Volumes/Data/DeepTutor")
+        };
+        let asked = std::cell::RefCell::new(None);
+        let config = ShellConfig::resolve_full(&|_| None, &|home: &Path| {
+            *asked.borrow_mut() = Some(home.to_path_buf());
+            Some(chosen.clone())
         });
+        let default = asked
+            .into_inner()
+            .expect("the shell asks the pointer at its default home");
+
         assert_eq!(config.home, chosen);
-        // The pointer's own location never follows the pointer.
         assert_eq!(config.default_home, default);
         assert_eq!(
             config.state_path,

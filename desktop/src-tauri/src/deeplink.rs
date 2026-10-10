@@ -205,6 +205,21 @@ mod tests {
         }
     }
 
+    /// Absolute paths (and their `file:` URLs) in the shape this platform's
+    /// shell hands over: the classifier asks `Path::is_absolute`, which is false
+    /// for a POSIX path on Windows.
+    #[cfg(unix)]
+    const PAPER_PATH: &str = "/Users/someone/paper.pdf";
+    #[cfg(windows)]
+    const PAPER_PATH: &str = r"C:\Users\someone\paper.pdf";
+    #[cfg(unix)]
+    const PAPER_URL: &str = "file:///Users/someone/paper.pdf";
+    #[cfg(windows)]
+    const PAPER_URL: &str = "file:///C:/Users/someone/paper.pdf";
+    #[cfg(unix)]
+    const SPACED_PATH: &str = "/Users/someone/My Paper.pdf";
+    #[cfg(windows)]
+    const SPACED_PATH: &str = r"C:\Users\someone\My Paper.pdf";
     #[test]
     fn deep_links_map_onto_app_routes() {
         assert_eq!(
@@ -251,11 +266,11 @@ mod tests {
 
     #[test]
     fn file_urls_become_file_requests() {
-        let request = classify_url(&url("file:///Users/someone/paper.pdf"));
+        let request = classify_url(&url(PAPER_URL));
         assert_eq!(
             request,
             Some(OpenRequest::File {
-                path: PathBuf::from("/Users/someone/paper.pdf")
+                path: PathBuf::from(PAPER_PATH)
             })
         );
         assert_eq!(request.as_ref().map(OpenRequest::kind), Some("file"));
@@ -271,9 +286,9 @@ mod tests {
         );
         // Quoted by the Windows shell when the path contains spaces.
         assert_eq!(
-            classify_argument("\"/Users/someone/My Paper.pdf\""),
+            classify_argument(&format!("\"{SPACED_PATH}\"")),
             Some(OpenRequest::File {
-                path: PathBuf::from("/Users/someone/My Paper.pdf")
+                path: PathBuf::from(SPACED_PATH)
             })
         );
         #[cfg(windows)]

@@ -1517,13 +1517,49 @@ mod tests {
         dir
     }
 
+    /// The two relative paths `desktop/pack/build_pack.py` writes into a real
+    /// manifest, which are not the same on both platforms.
+    fn venv_python_relative() -> &'static str {
+        if cfg!(windows) {
+            "venv/Scripts/python.exe"
+        } else {
+            "venv/bin/python"
+        }
+    }
+
+    fn node_dir_relative() -> &'static str {
+        if cfg!(windows) {
+            "node"
+        } else {
+            "node/bin"
+        }
+    }
+
+    /// The directory a venv keeps its interpreter in.
+    fn venv_bin(pack: &Path) -> PathBuf {
+        if cfg!(windows) {
+            pack.join("venv").join("Scripts")
+        } else {
+            pack.join("venv").join("bin")
+        }
+    }
+
+    /// The interpreter's file name inside `PackLayout::python_home`.
+    fn interpreter_name() -> &'static str {
+        if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python3"
+        }
+    }
+
     fn write_manifest(dir: &Path, pack_id: &str) {
         let manifest = serde_json::json!({
             "schema_version": SCHEMA_VERSION,
             "pack_id": pack_id,
             "app_version": "1.6.10",
             "platform": host_platform(),
-            "paths": {"python": "venv/bin/python", "node_dir": "node/bin"},
+            "paths": {"python": venv_python_relative(), "node_dir": node_dir_relative()},
         });
         fs::write(
             dir.join(MANIFEST_FILE),
@@ -1533,30 +1569,45 @@ mod tests {
     }
 
     /// A stand-in for a real pack: the files rehydration has to repair.
+    /// A pack in the shape `build_pack.py` produces *on this platform*, so the
+    /// rehydration tests exercise the derivation a real install uses instead of
+    /// a POSIX tree that only exists on unix.
     fn fake_pack(root: &Path, old_prefix: &Path) -> PathBuf {
         let pack = root.join("pack");
-        fs::create_dir_all(pack.join("python/bin")).unwrap();
-        fs::create_dir_all(pack.join("venv/bin")).unwrap();
-        fs::write(pack.join("python/bin/python3"), b"#!/bin/sh\n").unwrap();
+        let layout = PackLayout::host();
+        let python_home = layout.python_home(&pack);
+        let venv_bin = venv_bin(&pack);
+        fs::create_dir_all(&python_home).unwrap();
+        fs::create_dir_all(&venv_bin).unwrap();
+        fs::write(python_home.join(interpreter_name()), b"#!/bin/sh\n").unwrap();
         fs::write(
             pack.join("venv/pyvenv.cfg"),
             format!(
-                "home = {}/python/bin\nversion_info = 3.12.14\n",
-                old_prefix.display()
+                "home = {}\nversion_info = 3.12.14\n",
+                layout.python_home(old_prefix).display()
             ),
         )
         .unwrap();
-        let mut handle = File::create(pack.join("venv/bin/deeptutor")).unwrap();
-        writeln!(handle, "#!{}/python/bin/python3", old_prefix.display()).unwrap();
-        // A real pack ships an absolute interpreter link; that is exactly what
-        // rehydration has to make relative.
+        let mut handle = File::create(venv_bin.join("deeptutor")).unwrap();
+        writeln!(
+            handle,
+            "#!{}",
+            layout
+                .python_home(old_prefix)
+                .join(interpreter_name())
+                .display()
+        )
+        .unwrap();
+        // A real pack ships an absolute interpreter link, which is what
+        // rehydration has to make relative. A Windows venv gets the interpreter
+        // copied by `uv venv` instead, so there is nothing to fake there.
         #[cfg(unix)]
         std::os::unix::fs::symlink(
             old_prefix.join("python/bin/python3"),
-            pack.join("venv/bin/python"),
+            venv_bin.join("python"),
         )
         .unwrap();
-        write_manifest(&pack, "1.6.10-macos-aarch64");
+        write_manifest(&pack, &format!("1.6.10-{}", host_platform()));
         pack
     }
 
@@ -1569,18 +1620,70 @@ mod tests {
         rehydrate(&pack).unwrap();
 
         let cfg = fs::read_to_string(pack.join("venv/pyvenv.cfg")).unwrap();
-        assert!(cfg.contains(&format!("home = {}/python/bin", pack.display())));
+        assert!(
+            cfg.contains(&format!(
+                "home = {}",
+                PackLayout::host().python_home(&pack).display()
+            )),
+            "{cfg}"
+        );
         assert!(!cfg.contains("/build/machine"));
 
-        let script = fs::read_to_string(pack.join("venv/bin/deeptutor")).unwrap();
+        let script = fs::read_to_string(venv_bin(&pack).join("deeptutor")).unwrap();
         assert!(script.contains(&pack.to_string_lossy().to_string()));
         assert!(!script.contains("/build/machine"));
 
         #[cfg(unix)]
         {
-            let target = fs::read_link(pack.join("venv/bin/python")).unwrap();
+            let target = fs::read_link(venv_bin(&pack).join("python")).unwrap();
             assert_eq!(target, PathBuf::from("../../python/bin/python3"));
         }
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// The Windows pack shape, exercised from whatever host runs the suite:
+    /// `build_pack.py` puts the interpreter in `python/` (no `bin/`) and the
+    /// venv's in `Scripts/`, and `pyvenv.cfg` has to name the former. Leaving
+    /// this to the Windows runner alone is how the POSIX-only derivation went
+    /// unnoticed in the first place.
+    #[test]
+    fn rehydrate_understands_the_windows_pack_layout() {
+        let tmp = scratch("rehydrate-windows");
+        let pack = tmp.join("pack");
+        fs::create_dir_all(pack.join("python")).unwrap();
+        fs::create_dir_all(pack.join("venv/Scripts")).unwrap();
+        fs::write(pack.join("python/python.exe"), b"fake").unwrap();
+        fs::write(
+            pack.join("venv/pyvenv.cfg"),
+            format!(
+                "home = {}\\python\nversion_info = 3.12.14\n",
+                Path::new("/build/machine/stage").display()
+            ),
+        )
+        .unwrap();
+        write_manifest(&pack, "1.6.10-windows-x86_64");
+
+        rehydrate_in(&pack, PackLayout::Windows).unwrap();
+
+        let cfg = fs::read_to_string(pack.join("venv/pyvenv.cfg")).unwrap();
+        assert!(
+            cfg.contains(&format!(
+                "home = {}",
+                PackLayout::Windows.python_home(&pack).display()
+            )),
+            "{cfg}"
+        );
+        assert!(!cfg.contains("/build/machine"), "{cfg}");
+        // The derivation strips one component here and two for a POSIX pack.
+        assert_eq!(
+            pack_root_from_cfg_in(&pack, PackLayout::Windows),
+            Some(pack.clone())
+        );
+        assert_ne!(
+            pack_root_from_cfg_in(&pack, PackLayout::Posix),
+            Some(pack.clone()),
+            "the POSIX derivation strips one component too many for a Windows `home`"
+        );
         let _ = fs::remove_dir_all(&tmp);
     }
 
@@ -1831,6 +1934,14 @@ mod tests {
         let tmp = scratch("catalog");
         let installer = PackInstaller::new(&tmp);
         let host = host_platform();
+        // The fixture needs a platform that is *not* this one, whichever it is.
+        fn other_platform(host: &str) -> &'static str {
+            if host == "windows-x86_64" {
+                "macos-aarch64"
+            } else {
+                "windows-x86_64"
+            }
+        }
         fs::write(
             tmp.join("runtime-packs.json"),
             serde_json::json!({
@@ -1840,7 +1951,8 @@ mod tests {
                      "url": "a.tar.gz", "sha256": "aa"},
                     {"pack_id": "1.6.11", "app_version": "1.6.11", "platform": host,
                      "url": "b.tar.gz", "sha256": "bb"},
-                    {"pack_id": "9.9.9-other", "app_version": "9.9.9", "platform": "windows-x86_64",
+                    {"pack_id": "9.9.9-other", "app_version": "9.9.9",
+                     "platform": other_platform(&host),
                      "url": "c.tar.gz", "sha256": "cc"}
                 ]
             })
@@ -1874,9 +1986,12 @@ mod tests {
             resolve_relative("https://example.com/dl/packs.json", "a.tar.gz"),
             "https://example.com/dl/a.tar.gz"
         );
+        // A local catalog is a filesystem path, so the join uses this
+        // platform's separator.
+        let local = Path::new("/tmp").join("packs.json");
         assert_eq!(
-            resolve_relative("/tmp/packs.json", "a.tar.gz"),
-            "/tmp/a.tar.gz"
+            resolve_relative(&local.to_string_lossy(), "a.tar.gz"),
+            Path::new("/tmp").join("a.tar.gz").to_string_lossy()
         );
         assert_eq!(
             resolve_relative("https://example.com/dl/packs.json", "https://cdn/a.tar.gz"),
@@ -1900,7 +2015,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt as _;
             fs::set_permissions(
-                base.join("venv/bin/deeptutor"),
+                venv_bin(&base).join("deeptutor"),
                 fs::Permissions::from_mode(0o755),
             )
             .unwrap();
@@ -1908,24 +2023,28 @@ mod tests {
 
         rehydrate(&clone).unwrap();
 
+        let layout = PackLayout::host();
         let base_cfg = fs::read_to_string(base.join("venv/pyvenv.cfg")).unwrap();
         assert!(
-            base_cfg.contains(&format!("home = {}/python/bin", build_root.display())),
+            base_cfg.contains(&format!(
+                "home = {}",
+                layout.python_home(&build_root).display()
+            )),
             "the base pack's pyvenv.cfg was rewritten by the clone: {base_cfg}"
         );
-        let base_script = fs::read_to_string(base.join("venv/bin/deeptutor")).unwrap();
+        let base_script = fs::read_to_string(venv_bin(&base).join("deeptutor")).unwrap();
         assert!(
             base_script.contains(&build_root.to_string_lossy().to_string()),
             "the base pack's console script was rewritten by the clone: {base_script}"
         );
 
         let clone_cfg = fs::read_to_string(clone.join("venv/pyvenv.cfg")).unwrap();
-        assert!(clone_cfg.contains(&format!("home = {}/python/bin", clone.display())));
+        assert!(clone_cfg.contains(&format!("home = {}", layout.python_home(&clone).display())));
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            let mode = fs::metadata(clone.join("venv/bin/deeptutor"))
+            let mode = fs::metadata(venv_bin(&clone).join("deeptutor"))
                 .unwrap()
                 .permissions()
                 .mode();
@@ -1979,10 +2098,13 @@ mod tests {
         let tmp = scratch("chain");
         let build_root = tmp.join("stage-1.0.0");
         let staged = fake_pack(&tmp, &build_root);
+        let layout = PackLayout::host();
         // Outside the venv: the CPython tree and wheel metadata look like this.
+        // (`prefix=` names the python home's parent, which is the build root on
+        // both layouts.)
         fs::write(
-            staged.join("python/bin/sysconfigdata.txt"),
-            format!("prefix={}/python\n", build_root.display()),
+            layout.python_home(&staged).join("sysconfigdata.txt"),
+            format!("prefix={}\n", build_root.join("python").display()),
         )
         .unwrap();
         let stale = vec![build_root.to_string_lossy().into_owned()];
@@ -1998,7 +2120,8 @@ mod tests {
         assert_eq!(tree_digest(&installed, &stale).unwrap(), staged_digest);
 
         // And nothing is left naming the build machine.
-        let text = fs::read_to_string(installed.join("python/bin/sysconfigdata.txt")).unwrap();
+        let text =
+            fs::read_to_string(layout.python_home(&installed).join("sysconfigdata.txt")).unwrap();
         assert!(
             text.contains(&installed.to_string_lossy().to_string()),
             "{text}"
@@ -2015,7 +2138,8 @@ mod tests {
         let tmp = scratch("canonicalise");
         let build_root = tmp.join("stage");
         let pack = fake_pack(&tmp, &build_root);
-        let residual = pack.join("python/bin/sysconfigdata.txt");
+        let layout = PackLayout::host();
+        let residual = layout.python_home(&pack).join("sysconfigdata.txt");
         fs::write(
             &residual,
             format!("prefix={}/python\n", build_root.display()),
@@ -2023,7 +2147,7 @@ mod tests {
         .unwrap();
         // Past `MAX_REWRITE_BYTES`: rehydration skips it, so canonicalisation
         // must too (it is a binary/payload, not a prefix carrier).
-        let big = pack.join("python/bin/big.txt");
+        let big = layout.python_home(&pack).join("big.txt");
         fs::write(
             &big,
             format!("{}\n{}", build_root.display(), "x".repeat(300 * 1024)),
@@ -2032,7 +2156,11 @@ mod tests {
         #[cfg(unix)]
         let linked = {
             let link = pack.join("venv/elsewhere");
-            std::os::unix::fs::symlink(build_root.join("python/bin/python3"), &link).unwrap();
+            std::os::unix::fs::symlink(
+                layout.python_home(&build_root).join(interpreter_name()),
+                &link,
+            )
+            .unwrap();
             link
         };
 
@@ -2057,7 +2185,7 @@ mod tests {
         #[cfg(unix)]
         assert_eq!(
             fs::read_link(&linked).unwrap(),
-            pack.join("python/bin/python3"),
+            layout.python_home(&pack).join(interpreter_name()),
             "a symlink target naming the build machine must be repointed"
         );
         let _ = fs::remove_dir_all(&tmp);
