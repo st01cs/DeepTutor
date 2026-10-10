@@ -122,7 +122,7 @@ jobs:
           "$PYTHON" -c "
           import json, os
           from pathlib import PurePath
-          payload = json.load(open('self-check.json'))
+          payload = json.load(open('self-check.json', encoding='utf-8'))
           assert payload['shell'] == 'deeptutor-desktop', payload
           assert payload['home'] == os.environ['DEEPTUTOR_HOME'], payload
           assert payload['workdir'] == os.environ['DEEPTUTOR_DESKTOP_WORKDIR'], payload
@@ -149,7 +149,7 @@ jobs:
           ./target/debug/deeptutor-desktop --pack-status > packs.json
           "$PYTHON" -c "
           import json, os, pathlib
-          first = json.load(open('first-run.json'))
+          first = json.load(open('first-run.json', encoding='utf-8'))
           assert first['first_run']['completed'] is False, first
           assert first['first_run']['can_change_data_dir'] is True, first
           # The storage step the wizard shows: the profile root it redirects,
@@ -166,16 +166,16 @@ jobs:
           else:
               assert free > 0, first
 
-          done = json.load(open('first-run-done.json'))
+          done = json.load(open('first-run-done.json', encoding='utf-8'))
           assert done['restart_required'] is True, done
           assert done['settings']['first_run_completed'] is True, done
           # The answers must travel with the pointer, or the wizard reappears.
-          carried = json.loads(pathlib.Path(os.environ['DEEPTUTOR_HOME'], 'data', 'desktop', 'shell.json').read_text())
+          carried = json.loads(pathlib.Path(os.environ['DEEPTUTOR_HOME'], 'data', 'desktop', 'shell.json').read_text(encoding='utf-8'))
           assert carried['first_run_completed'] is True, carried
           assert carried['locale'] == 'en', carried
 
           # A catalog for *this* runner's platform, offering something newer.
-          packs = json.load(open('packs.json'))
+          packs = json.load(open('packs.json', encoding='utf-8'))
           assert packs['active_pack'] is None, packs
           assert packs['installed'] == [], packs
           catalog = {
@@ -199,7 +199,7 @@ jobs:
             --catalog ./runtime-packs.fixture.json > updates.json
           "$PYTHON" -c "
           import json
-          report = json.load(open('updates.json'))
+          report = json.load(open('updates.json', encoding='utf-8'))
           runtime = report['runtime']
           # The runtime plane must answer, and must not have installed anything.
           assert runtime['checked'] is True, report
