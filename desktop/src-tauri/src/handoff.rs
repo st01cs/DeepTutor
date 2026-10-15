@@ -162,13 +162,39 @@ mod tests {
         Url::parse(raw).expect("test url")
     }
 
+    /// Absolute paths in this platform's shape: `push_args` only accepts
+    /// absolute ones, and `/tmp/...` is not absolute on Windows.
+    #[cfg(unix)]
+    const PAPER: &str = "/tmp/paper.pdf";
+    #[cfg(windows)]
+    const PAPER: &str = r"C:\Users\someone\paper.pdf";
+    #[cfg(unix)]
+    const PAPER_URL: &str = "file:///tmp/paper.pdf";
+    #[cfg(windows)]
+    const PAPER_URL: &str = "file:///C:/Users/someone/paper.pdf";
+    #[cfg(unix)]
+    const NOTES: &str = "/tmp/notes.md";
+    #[cfg(windows)]
+    const NOTES: &str = r"C:\Users\someone\notes.md";
+    #[cfg(unix)]
+    const OUTSIDE: &str = "/etc/passwd";
+    #[cfg(windows)]
+    const OUTSIDE: &str = r"C:\Windows\notepad.exe";
+    #[cfg(unix)]
+    const OTHER: &str = "/tmp/other.pdf";
+    #[cfg(windows)]
+    const OTHER: &str = r"C:\Users\someone\other.pdf";
+    #[cfg(unix)]
+    const PICKED: &str = "/tmp/picked.pdf";
+    #[cfg(windows)]
+    const PICKED: &str = r"C:\Users\someone\picked.pdf";
     #[test]
     fn urls_are_classified_and_drained_in_order() {
         let queue = OpenQueue::new();
         let urls = [
             url("deeptutor://chat/1f0c"),
             url("https://example.com/ignored"),
-            url("file:///tmp/paper.pdf"),
+            url(PAPER_URL),
         ];
         assert_eq!(queue.push_urls(&urls, "deep-link"), 2);
 
@@ -181,7 +207,7 @@ mod tests {
 
         let second = queue.take().expect("second");
         assert_eq!(second.kind, "file");
-        assert_eq!(second.path.as_deref(), Some("/tmp/paper.pdf"));
+        assert_eq!(second.path.as_deref(), Some(PAPER));
         assert!(queue.take().is_none());
         assert!(queue.is_empty());
     }
@@ -213,14 +239,14 @@ mod tests {
             vec![
                 "--flag".to_string(),
                 "deeptutor://settings".to_string(),
-                "/tmp/notes.md".to_string(),
+                NOTES.to_string(),
             ],
             "argv",
         );
         assert_eq!(accepted, 2);
         assert_eq!(queue.take().expect("route").kind, "route");
         let file = queue.take().expect("file");
-        assert_eq!(file.path.as_deref(), Some("/tmp/notes.md"));
+        assert_eq!(file.path.as_deref(), Some(NOTES));
         assert_eq!(file.source, "argv");
     }
 
@@ -229,26 +255,23 @@ mod tests {
     #[test]
     fn only_handed_over_paths_may_be_read_back() {
         let queue = OpenQueue::new();
-        assert!(!queue.take_read_grant(Path::new("/etc/passwd")));
+        assert!(!queue.take_read_grant(Path::new(OUTSIDE)));
 
-        queue.push_args(
-            vec!["argv0".to_string(), "/tmp/paper.pdf".to_string()],
-            "argv",
-        );
+        queue.push_args(vec!["argv0".to_string(), PAPER.to_string()], "argv");
         // The path is readable even after `take` drained the queue: the read
         // happens after the UI has claimed the hand-off.
         let request = queue.take().expect("file request");
-        assert_eq!(request.path.as_deref(), Some("/tmp/paper.pdf"));
-        assert!(queue.take_read_grant(Path::new("/tmp/paper.pdf")));
-        assert!(!queue.take_read_grant(Path::new("/tmp/paper.pdf")));
-        assert!(!queue.take_read_grant(Path::new("/tmp/other.pdf")));
+        assert_eq!(request.path.as_deref(), Some(PAPER));
+        assert!(queue.take_read_grant(Path::new(PAPER)));
+        assert!(!queue.take_read_grant(Path::new(PAPER)));
+        assert!(!queue.take_read_grant(Path::new(OTHER)));
 
         // Picker results are granted explicitly, one read per grant.
-        queue.grant_read(Path::new("/tmp/picked.pdf"));
-        queue.grant_read(Path::new("/tmp/picked.pdf"));
-        assert!(queue.take_read_grant(Path::new("/tmp/picked.pdf")));
-        assert!(queue.take_read_grant(Path::new("/tmp/picked.pdf")));
-        assert!(!queue.take_read_grant(Path::new("/tmp/picked.pdf")));
+        queue.grant_read(Path::new(PICKED));
+        queue.grant_read(Path::new(PICKED));
+        assert!(queue.take_read_grant(Path::new(PICKED)));
+        assert!(queue.take_read_grant(Path::new(PICKED)));
+        assert!(!queue.take_read_grant(Path::new(PICKED)));
     }
 
     #[test]

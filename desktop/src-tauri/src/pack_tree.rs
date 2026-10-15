@@ -310,6 +310,15 @@ mod tests {
         // a shebang carries the build path.
         let staged = scratch("staged");
         fs::create_dir_all(staged.join("venv/bin")).unwrap();
+        // Created before the link below, because Windows' `create_symlink`
+        // copies its target rather than linking to it.
+        fs::create_dir_all(staged.join("python/bin")).unwrap();
+        fs::write(staged.join("python/bin/python3"), b"#!/bin/sh\n").unwrap();
+        fs::write(
+            staged.join("python/bin/version.txt"),
+            format!("built in {}\n", staged.display()),
+        )
+        .unwrap();
         fs::write(
             staged.join("venv/pyvenv.cfg"),
             format!("home = {}/python/bin\n", staged.display()),
@@ -330,6 +339,13 @@ mod tests {
         // The installed form: same files, root path rewritten, links relative.
         let installed = scratch("installed");
         fs::create_dir_all(installed.join("venv/bin")).unwrap();
+        fs::create_dir_all(installed.join("python/bin")).unwrap();
+        fs::write(installed.join("python/bin/python3"), b"#!/bin/sh\n").unwrap();
+        fs::write(
+            installed.join("python/bin/version.txt"),
+            format!("built in {}\n", staged.display()),
+        )
+        .unwrap();
         fs::write(
             installed.join("venv/pyvenv.cfg"),
             format!("home = {}/python/bin\n", installed.display()),
@@ -352,14 +368,6 @@ mod tests {
         // at `python/`. The installer therefore has to tokenise the delta's
         // recorded base root too — this is the 108-byte mismatch found against a
         // real pack on 2026-09-24.
-        for tree in [&staged, &installed] {
-            fs::create_dir_all(tree.join("python/bin")).unwrap();
-            fs::write(
-                tree.join("python/bin/version.txt"),
-                format!("built in {}\n", staged.display()),
-            )
-            .unwrap();
-        }
         let stale = vec![staged.to_string_lossy().into_owned()];
 
         assert_eq!(
@@ -397,6 +405,11 @@ mod tests {
         let destination = scratch("clone-destination");
         fs::write(source.join("big.bin"), vec![7u8; 4096]).unwrap();
         fs::create_dir_all(source.join("venv/bin")).unwrap();
+        // The interpreter has to exist: a Windows checkout cannot create
+        // symlinks without a privilege, and `create_symlink` copies the target
+        // there instead.
+        fs::create_dir_all(source.join("python/bin")).unwrap();
+        fs::write(source.join("python/bin/python3"), b"#!/bin/sh\n").unwrap();
         create_symlink("../../python/bin/python3", &source.join("venv/bin/python")).unwrap();
 
         clone_tree(&source, &destination).unwrap();
@@ -404,10 +417,21 @@ mod tests {
             fs::read(destination.join("big.bin")).unwrap(),
             vec![7u8; 4096]
         );
+        let cloned = destination.join("venv/bin/python");
+        #[cfg(unix)]
         assert_eq!(
-            fs::read_link(destination.join("venv/bin/python")).unwrap(),
+            fs::read_link(&cloned).unwrap(),
             PathBuf::from("../../python/bin/python3")
         );
+        #[cfg(windows)]
+        {
+            // What a Windows pack carries: the copy the fallback made.
+            assert_eq!(fs::read(&cloned).unwrap(), b"#!/bin/sh\n");
+            assert!(!fs::symlink_metadata(&cloned)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        }
         let _ = fs::remove_dir_all(&source);
         let _ = fs::remove_dir_all(&destination);
     }
